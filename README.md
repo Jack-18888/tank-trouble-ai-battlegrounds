@@ -4,13 +4,14 @@ A browser arcade game inspired by Tank Trouble. Drive a tank through a procedura
 
 ## Play locally
 
-Use Node.js 22 or newer:
+Use Node.js 22.13 or newer on the 22.x line, or Node.js 24 or newer:
 
 ```sh
+npm ci
 npm run dev
 ```
 
-Open http://localhost:5173. No installation step is required. The game needs a web server because it uses JavaScript modules.
+Open http://localhost:5173. The game needs a web server because it uses JavaScript modules. Installed packages are development tools; the game itself has no runtime dependencies.
 
 ```sh
 npm test       # deterministic simulation tests
@@ -19,14 +20,28 @@ npm run build # creates the standalone static site in dist/
 
 Serve `dist/` with any static host. `node scripts/serve.mjs --dist` previews the built site. Set `PORT` to use a different local port.
 
+## Code quality
+
+ESLint checks JavaScript for errors and unused code, with separate browser and Node.js environments. The simulation and geometry modules do not receive browser globals. Prettier handles JavaScript, HTML, CSS, JSON, and Markdown formatting: two spaces, single quotes in JavaScript, a 100-character preferred line width, and LF line endings.
+
+| Command                | Purpose                                           |
+| ---------------------- | ------------------------------------------------- |
+| `npm run lint`         | Check JavaScript; warnings fail the check         |
+| `npm run lint:fix`     | Apply available ESLint fixes                      |
+| `npm run format`       | Format the project                                |
+| `npm run format:check` | Check formatting without changing files           |
+| `npm run check`        | Run lint, formatting checks, and simulation tests |
+
+Run `npm run check` before committing changes. Build output, dependencies, browser-test artifacts, and local hosting runtime files are excluded from these tools. `.editorconfig` supplies matching whitespace defaults to compatible editors. The committed lockfile keeps tool versions reproducible with `npm ci`.
+
 ## Controls
 
-| Action | Keys |
-| --- | --- |
+| Action                  | Keys           |
+| ----------------------- | -------------- |
 | Drive forward / reverse | W / S or ↑ / ↓ |
-| Turn left / right | A / D or ← / → |
-| Fire | Space |
-| Pause / resume | Escape or P |
+| Turn left / right       | A / D or ← / → |
+| Fire                    | Space          |
+| Pause / resume          | Escape or P    |
 
 Touchscreens get a direction pad and a fire button. The arena also supports fullscreen. Switching away from the game automatically pauses it.
 

@@ -1,0 +1,8 @@
+# Generated files and local tooling artifacts
+dist/
+node_modules/
+.qa/
+.sites-runtime/
+package-lock.json
+*.zip
+*.tar.gz
