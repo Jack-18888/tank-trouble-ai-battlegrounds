@@ -1,0 +1,5 @@
+dist/
+node_modules/
+.qa/
+.sites-runtime/
+*.zip

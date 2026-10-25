@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f5ef">
+  <meta name="description" content="Small tanks. Big trouble. Battle clever bots in an ever-changing maze. A free browser arcade game with ricocheting shots and random arenas.">
+  <title>Tank Trouble — Ricochet Arena</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%232c5743'/%3E%3Cpath d='M11 17h7v22h-7zm19 0h7v22h-7zM19 20h10v16H19zm3-13h4v21h-4z' fill='%23e5edbd'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <div class="site-wrap">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Tank Trouble home"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M7 13h7v23H7zm19 0h7v23h-7zM15 17h10v16H15zm3-13h4v20h-4z" fill="currentColor"/></svg></span><span>TANK<span class="brand-light">TROUBLE</span><span class="brand-dot">®</span></span></a>
+      <div class="header-right"><span class="local-tag"><i></i> NO DOWNLOAD. JUST PLAY.</span><button class="text-button" id="help-button"><span class="circle-question">?</span> How to play</button></div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div><p class="eyebrow"><span></span> A LITTLE CHAOS GOES A LONG WAY</p><h1 id="page-title">Small tanks. <em>Big trouble.</em></h1><p class="intro-copy">Outsmart the bots. Own the maze. Try not to shoot yourself.</p></div>
+        <div class="intro-stamp" aria-hidden="true"><span>100% LOCAL</span><svg viewBox="0 0 66 45"><path d="M5 36h32V16H17v20m7-20V5h7v11m6 12h19m-6-6 6 6-6 6M8 40h26" fill="none" stroke="currentColor" stroke-width="3"/></svg><span>0% MERCY</span></div>
+      </section>
+
+      <div class="game-layout">
+        <section class="arena-column" aria-label="Game arena">
+          <div class="arena-topline"><div class="section-label"><span class="live-dot"></span> THE ARENA <span class="tag" id="arena-state">STANDING BY</span></div><div class="arena-tools"><button class="icon-button" id="sound-button" aria-label="Turn sound off" title="Toggle sound"></button><button class="icon-button" id="pause-button" aria-label="Pause game" title="Pause (Esc)" disabled></button><button class="icon-button" id="fullscreen-button" aria-label="Enter fullscreen" title="Fullscreen"></button></div></div>
+          <div class="arena-shell" id="arena-shell">
+            <div class="scoreboard" id="scoreboard" aria-label="Match scores"></div>
+            <div class="canvas-wrap" id="canvas-wrap">
+              <canvas id="arena" width="960" height="640" tabindex="0" aria-label="Tank arena. Use arrow keys or W A S D to move and turn. Space to fire. Escape to pause."></canvas>
+              <div class="arena-overlay" id="overlay"><div class="overlay-card" id="overlay-content"></div></div>
+              <div class="round-toast" id="round-toast" aria-live="polite"></div>
+              <div class="arena-corner top-left" aria-hidden="true"></div><div class="arena-corner bottom-right" aria-hidden="true"></div>
+            </div>
+            <div class="arena-bottomline"><span><span class="mini-cross">✳</span> <span id="round-label">FREE-FOR-ALL</span></span><span id="match-clock">FIRST TO 5</span><span class="seed-label">MAP <span id="map-seed">—</span></span></div>
+            <div class="touch-controls" id="touch-controls" aria-label="Touch game controls"><div class="d-pad"><button data-key="ArrowUp" class="pad-up" aria-label="Forward">↑</button><button data-key="ArrowLeft" class="pad-left" aria-label="Turn left">↶</button><button data-key="ArrowDown" class="pad-down" aria-label="Reverse">↓</button><button data-key="ArrowRight" class="pad-right" aria-label="Turn right">↷</button></div><button class="touch-fire" data-key="Space" aria-label="Fire">FIRE <span>◎</span></button></div>
+          </div>
+          <div class="below-arena"><div class="keyboard-legend"><span class="key-group"><kbd>W</kbd><span class="wasd-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span></span><span>or <span class="arrow-keys">↑ ← ↓ →</span> <b>Move & turn</b></span><span class="legend-divider"></span><kbd class="space-key">SPACE</kbd><b>Fire</b><span class="legend-divider"></span><kbd>ESC</kbd><b>Pause</b></div><span class="friendly-warning">Your bullets bite back. <span>↗</span></span></div>
+          <div class="field-note"><span class="note-number">FIELD NOTE / 01</span><p id="field-note">Walls are a suggestion. Bounce your shots around corners to catch a tank off guard.</p><span class="note-icon" aria-hidden="true">↱</span></div>
+        </section>
+
+        <aside class="setup-panel" aria-label="Match configuration">
+          <div class="panel-heading"><div><span class="eyebrow">YOUR RULES. YOUR MAYHEM.</span><h2>Match setup<span>.</span></h2></div><span class="sliders-icon" aria-hidden="true">☷</span></div>
+          <div class="setting-block"><div class="setting-heading"><label>Opponents</label><span class="setting-hint">THE MORE, THE MESSIER</span></div><div class="opponent-stepper"><button id="opponent-minus" aria-label="Remove opponent">−</button><div><strong id="opponent-count">2</strong><span>BOT OPPONENTS</span></div><button id="opponent-plus" aria-label="Add opponent">+</button></div></div>
+          <div class="setting-block difficulty-block"><div class="setting-heading"><label id="difficulty-label">Bot difficulty</label><span class="difficulty-status" id="difficulty-status">A FAIR FIGHT</span></div><div class="segmented" id="difficulty" role="group" aria-labelledby="difficulty-label"><button data-value="easy">Easy</button><button data-value="medium" class="selected" aria-pressed="true">Medium</button><button data-value="hard">Hard</button></div><p class="setting-description" id="difficulty-description">Quick on the trigger. A little less forgiving.</p><div class="bot-roster" id="bot-roster"></div></div>
+          <div class="setting-block map-settings"><div class="setting-heading"><label for="map-size">The battleground</label><button class="shuffle-button" id="shuffle-button" title="Generate a new maze">↝ <span>Shuffle</span></button></div><div class="select-wrap"><select id="map-size"><option value="compact">Compact · 10 × 7</option><option value="classic" selected>Classic · 12 × 8</option><option value="large">Expansive · 15 × 10</option></select></div><div class="two-settings"><div><label for="maze-density">Maze style</label><div class="select-wrap"><select id="maze-density"><option value="open">Open</option><option value="balanced" selected>Balanced</option><option value="dense">Labyrinth</option></select></div></div><div><label for="win-target">Play to</label><div class="select-wrap"><select id="win-target"><option value="3">3 wins</option><option value="5" selected>5 wins</option><option value="10">10 wins</option><option value="0">Endless</option></select></div></div></div></div>
+          <div class="setting-block extras"><label class="toggle-row" for="powerups"><span><span class="power-icon">ϟ</span> Power-ups <small>A little extra firepower</small></span><input id="powerups" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label></div>
+          <button class="start-button" id="start-button"><span id="start-label">Let’s battle</span><span>↗</span></button><p class="start-caption" id="start-caption">YOU + 2 BOTS. ONE TANK LEFT STANDING.</p>
+        </aside>
+      </div>
+
+      <section class="how-strip" aria-label="Game rules"><div><span class="rule-icon">01</span><p><strong>Keep it moving.</strong><span>A moving tank is a harder target.</span></p></div><div><span class="rule-icon">02</span><p><strong>Play the angles.</strong><span>Every wall is a new opportunity.</span></p></div><div><span class="rule-icon">03</span><p><strong>Last tank takes it.</strong><span>Win the round. Chase the crown.</span></p></div></section>
+    </main>
+    <footer><span>A SMALL GAME WITH A BIG RECOIL.</span><span>Made for the fun of it. <span class="footer-star">✳</span></span></footer>
+  </div>
+
+  <dialog id="help-dialog"><div class="help-content"><button class="close-help icon-button" id="close-help" aria-label="Close instructions">×</button><p class="eyebrow">THE SURVIVAL GUIDE</p><h2>Welcome to the trouble.</h2><p>Drive your green tank through the maze. Eliminate the other tanks and be the last one standing to score a round win.</p><div class="help-controls"><p><kbd>W</kbd> / <kbd>↑</kbd> Forward &nbsp; <kbd>S</kbd> / <kbd>↓</kbd> Reverse</p><p><kbd>A</kbd> / <kbd>←</kbd> Turn left &nbsp; <kbd>D</kbd> / <kbd>→</kbd> Turn right</p><p><kbd>SPACE</kbd> Fire &nbsp; <kbd>ESC</kbd> Pause / resume</p></div><p><strong>Mind the ricochet.</strong> You can have five shells in flight. Shells bounce off walls, last about eight seconds, and can destroy your own tank after a bounce.</p><p><strong>Pick your trouble.</strong> Easy bots react slowly. Medium bots hunt you through the maze. Hard bots dodge shells and calculate bank shots. Set each bot’s difficulty separately for a mixed match.</p><div class="powerup-guide"><span><b class="power-shield">◇</b> Shield · blocks one hit</span><span><b class="power-rapid">ϟ</b> Rapid fire · 7 seconds</span><span><b class="power-scatter">⋔</b> Triple shot · 7 seconds</span></div><p class="help-fine">A fresh, fully connected maze every round. All play and saved preferences stay in your browser. On touchscreens, use the direction pad and FIRE button.</p><button class="start-button" id="got-it">Got it. Let’s roll. <span>↗</span></button></div></dialog>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

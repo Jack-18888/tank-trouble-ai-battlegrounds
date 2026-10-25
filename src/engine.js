@@ -1,0 +1,438 @@
+// Pure simulation: no DOM, canvas, audio, or frame-rate dependent movement.
+export const CELL = 64;
+export const TANK_RADIUS = 13;
+export const SHELL_SPEED = 268;
+export const COLORS = ['#376b48', '#d17a4d', '#b39b40', '#5e889e', '#9680ad', '#bd6877'];
+export const NAMES = ['You', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
+export const LEVELS = {
+  easy: { speed: 78, turn: 2.4, reaction: .55, error: .16, cooldown: 1.15, dodge: false, bank: false },
+  medium: { speed: 96, turn: 3.15, reaction: .24, error: .045, cooldown: .72, dodge: true, bank: false },
+  hard: { speed: 108, turn: 3.9, reaction: .11, error: .012, cooldown: .46, dodge: true, bank: true },
+};
+export const DEFAULT_CONFIG = { opponents: 2, difficulties: ['medium', 'medium'], size: 'classic', density: 'balanced', target: 5, powerups: true };
+export const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+export const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+export const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+export function randomGenerator(seed) {
+  let value = 2166136261;
+  for (const c of String(seed)) value = Math.imul(value ^ c.charCodeAt(0), 16777619);
+  return () => {
+    value += 0x6D2B79F5;
+    let n = value;
+    n = Math.imul(n ^ n >>> 15, n | 1);
+    n ^= n + Math.imul(n ^ n >>> 7, n | 61);
+    return ((n ^ n >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+export function generateMap(size = 'classic', density = 'balanced', seed = String(Date.now())) {
+  const [cols, rows] = ({ compact: [10, 7], classic: [12, 8], large: [15, 10] })[size] || [12, 8];
+  const rng = randomGenerator(seed);
+  const cells = Array.from({ length: cols * rows }, (_, id) => ({ id, x: id % cols, y: Math.floor(id / cols), walls: [true, true, true, true] }));
+  const around = cell => [[0, -1], [1, 0], [0, 1], [-1, 0]].map(([dx, dy], d) => ({ d, cell: cells[(cell.y + dy) * cols + cell.x + dx] })).filter(({ cell: c }) => c && Math.abs(c.x - cell.x) + Math.abs(c.y - cell.y) === 1);
+  const visited = new Set([0]);
+  const stack = [cells[0]];
+  while (stack.length) {
+    const current = stack.at(-1);
+    const options = around(current).filter(o => !visited.has(o.cell.id));
+    if (!options.length) { stack.pop(); continue; }
+    const next = options[Math.floor(rng() * options.length)];
+    current.walls[next.d] = false;
+    next.cell.walls[(next.d + 2) % 4] = false;
+    visited.add(next.cell.id);
+    stack.push(next.cell);
+  }
+  const openness = ({ open: .65, balanced: .30, dense: .08 })[density] ?? .30;
+  for (const cell of cells) {
+    for (const { d, cell: next } of around(cell)) {
+      if ((d === 1 || d === 2) && cell.walls[d] && rng() < openness) {
+        cell.walls[d] = false;
+        next.walls[(d + 2) % 4] = false;
+      }
+    }
+  }
+  const walls = [];
+  const add = (x1, y1, x2, y2, border = false) => walls.push({ x1, y1, x2, y2, x: Math.min(x1, x2) - 3, y: Math.min(y1, y2) - 3, w: Math.abs(x2 - x1) + 6, h: Math.abs(y2 - y1) + 6, border });
+  for (const c of cells) {
+    if (c.walls[0]) add(c.x * CELL, c.y * CELL, (c.x + 1) * CELL, c.y * CELL, c.y === 0);
+    if (c.walls[3]) add(c.x * CELL, c.y * CELL, c.x * CELL, (c.y + 1) * CELL, c.x === 0);
+    if (c.x === cols - 1) add(cols * CELL, c.y * CELL, cols * CELL, (c.y + 1) * CELL, true);
+    if (c.y === rows - 1) add(c.x * CELL, rows * CELL, (c.x + 1) * CELL, rows * CELL, true);
+  }
+  return { cols, rows, width: cols * CELL, height: rows * CELL, cells, walls, seed: String(seed).toUpperCase() };
+}
+
+export function cellAt(map, x, y) {
+  return clamp(Math.floor(y / CELL), 0, map.rows - 1) * map.cols + clamp(Math.floor(x / CELL), 0, map.cols - 1);
+}
+export function neighbors(map, id) {
+  const c = map.cells[id];
+  return [id - map.cols, id + 1, id + map.cols, id - 1].filter((next, i) => !c.walls[i] && next >= 0 && next < map.cells.length);
+}
+export function findPath(map, start, end) {
+  if (start === end) return [start];
+  const previous = new Int32Array(map.cells.length).fill(-1);
+  previous[start] = start;
+  const queue = [start];
+  for (let i = 0; i < queue.length; i++) {
+    for (const next of neighbors(map, queue[i])) {
+      if (previous[next] !== -1) continue;
+      previous[next] = queue[i];
+      if (next === end) {
+        const path = [end];
+        while (path.at(-1) !== start) path.push(previous[path.at(-1)]);
+        return path.reverse();
+      }
+      queue.push(next);
+    }
+  }
+  return [];
+}
+
+export function circleWall(x, y, radius, wall) {
+  const cx = clamp(x, wall.x, wall.x + wall.w);
+  const cy = clamp(y, wall.y, wall.y + wall.h);
+  return (x - cx) ** 2 + (y - cy) ** 2 < radius ** 2;
+}
+
+// Sweep a shell against expanded wall rectangles, returning the earliest impact.
+export function firstWall(map, x, y, dx, dy, radius = 3) {
+  let result = null;
+  for (const wall of map.walls) {
+    let enter = -Infinity, leave = Infinity, nx = 0, ny = 0, valid = true;
+    for (const axis of ['x', 'y']) {
+      const p = axis === 'x' ? x : y;
+      const d = axis === 'x' ? dx : dy;
+      const min = wall[axis] - radius;
+      const max = wall[axis] + wall[axis === 'x' ? 'w' : 'h'] + radius;
+      if (Math.abs(d) < 1e-10) { if (p < min || p > max) valid = false; continue; }
+      const a = (min - p) / d, b = (max - p) / d;
+      const near = Math.min(a, b), far = Math.max(a, b);
+      if (near > enter + 1e-8) { enter = near; nx = axis === 'x' ? -Math.sign(d) : 0; ny = axis === 'y' ? -Math.sign(d) : 0; }
+      else if (Math.abs(near - enter) < 1e-8) { if (axis === 'x') nx = -Math.sign(d); else ny = -Math.sign(d); }
+      leave = Math.min(leave, far);
+    }
+    if (valid && enter <= leave && leave >= 0 && enter >= -1e-8 && enter <= 1 && (!result || enter < result.t)) result = { t: Math.max(0, enter), nx, ny, wall };
+  }
+  return result;
+}
+
+function segmentCircle(x, y, dx, dy, tank, radius) {
+  const ox = x - tank.x, oy = y - tank.y;
+  const a = dx * dx + dy * dy;
+  const c = ox * ox + oy * oy - radius * radius;
+  if (c < 0) return 0;
+  const b = 2 * (ox * dx + oy * dy);
+  const disc = b * b - 4 * a * c;
+  if (disc < 0 || a < 1e-10) return null;
+  const t = (-b - Math.sqrt(disc)) / (2 * a);
+  return t >= 0 && t <= 1 ? t : null;
+}
+
+export class Game {
+  constructor(config = DEFAULT_CONFIG, seed) {
+    this.events = [];
+    this.config = this.validateConfig(config);
+    this.rng = randomGenerator(seed || Date.now());
+    this.scores = Array(this.config.opponents + 1).fill(0);
+    this.round = 0;
+    this.state = 'ready';
+    this.particles = [];
+    this.tracks = [];
+    this.shake = 0;
+    this.prepareRound(seed);
+  }
+  validateConfig(config) {
+    const c = { ...DEFAULT_CONFIG, ...config };
+    c.opponents = clamp(Math.round(Number(c.opponents) || 1), 1, 5);
+    c.difficulties = Array.from({ length: c.opponents }, (_, i) => LEVELS[c.difficulties?.[i]] ? c.difficulties[i] : 'medium');
+    c.target = [0, 3, 5, 10].includes(Number(c.target)) ? Number(c.target) : 5;
+    c.size = ['compact', 'classic', 'large'].includes(c.size) ? c.size : 'classic';
+    c.density = ['open', 'balanced', 'dense'].includes(c.density) ? c.density : 'balanced';
+    c.powerups = Boolean(c.powerups);
+    return c;
+  }
+  emit(type, data = {}) { this.events.push({ type, ...data }); }
+  drainEvents() { const events = this.events; this.events = []; return events; }
+  seed() { return Math.floor(this.rng() * 2176782336).toString(36).padStart(6, '0').toUpperCase(); }
+  prepareRound(seed) {
+    this.map = generateMap(this.config.size, this.config.density, seed || this.seed());
+    this.bullets = [];
+    this.powerups = [];
+    this.particles = [];
+    this.tracks = [];
+    this.elapsed = 0;
+    this.powerTimer = 5;
+    this.settleTimer = null;
+    this.shake = 0;
+    const spawnCells = [];
+    const first = Math.floor(this.rng() * this.map.cells.length);
+    spawnCells.push(first);
+    while (spawnCells.length < this.config.opponents + 1) {
+      let best = -1, score = -1;
+      for (let id = 0; id < this.map.cells.length; id++) {
+        if (spawnCells.includes(id)) continue;
+        const cell = this.map.cells[id];
+        const separation = Math.min(...spawnCells.map(s => { const c = this.map.cells[s]; return Math.hypot(cell.x - c.x, cell.y - c.y); }));
+        const value = separation + this.rng() * .4;
+        if (value > score) { best = id; score = value; }
+      }
+      spawnCells.push(best);
+    }
+    this.tanks = spawnCells.map((id, i) => {
+      const c = this.map.cells[id];
+      return { id: i, name: NAMES[i], color: COLORS[i], x: (c.x + .5) * CELL, y: (c.y + .5) * CELL, angle: -Math.PI / 2 + this.rng() * Math.PI * 2, alive: true, cooldown: .4, shield: false, power: null, powerTime: 0, vx: 0, vy: 0, tread: 0, think: this.rng() * .4, steer: 0, throttle: 0, fire: false, stuck: 0, previousX: 0, previousY: 0, kills: 0, difficulty: i ? this.config.difficulties[i - 1] : null };
+    });
+    this.emit('map');
+  }
+  start() {
+    this.scores.fill(0);
+    this.round = 1;
+    this.prepareRound();
+    this.beginCountdown();
+    this.emit('score');
+  }
+  beginCountdown() { this.state = 'countdown'; this.timer = 2.4; this.lastCount = -1; this.emit('state'); }
+  pause() {
+    if (this.state === 'paused') { this.state = this.resumeState; this.emit('state'); return; }
+    if (['playing', 'countdown', 'roundOver'].includes(this.state)) { this.resumeState = this.state; this.state = 'paused'; this.emit('state'); }
+  }
+  update(dt, input = {}) {
+    dt = clamp(dt, 0, .04);
+    if (this.state === 'ready' || this.state === 'paused' || this.state === 'matchOver') return;
+    this.updateEffects(dt);
+    if (this.state === 'countdown') {
+      this.timer -= dt;
+      const count = Math.ceil(this.timer / .8);
+      if (count !== this.lastCount) { this.lastCount = count; this.emit('countdown', { count }); }
+      if (this.timer <= 0) { this.state = 'playing'; this.emit('state'); this.emit('go'); }
+      return;
+    }
+    if (this.state === 'roundOver') {
+      this.timer -= dt;
+      if (this.timer <= 0) { this.round++; this.prepareRound(); this.beginCountdown(); }
+      return;
+    }
+    this.elapsed += dt;
+    for (const tank of this.tanks) {
+      if (!tank.alive) continue;
+      tank.cooldown = Math.max(0, tank.cooldown - dt);
+      if (tank.powerTime > 0) { tank.powerTime -= dt; if (tank.powerTime <= 0) tank.power = null; }
+      const oldX = tank.x, oldY = tank.y;
+      if (tank.id === 0) {
+        tank.steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
+        tank.throttle = Number(Boolean(input.forward)) - Number(Boolean(input.backward));
+        tank.fire = Boolean(input.fire);
+      } else {
+        tank.think -= dt;
+        if (tank.think <= 0) { this.think(tank); tank.think = LEVELS[tank.difficulty].reaction * (.85 + this.rng() * .3); }
+      }
+      const profile = tank.id ? LEVELS[tank.difficulty] : { speed: 114, turn: 3.7 };
+      tank.angle += tank.steer * profile.turn * dt;
+      this.moveTank(tank, Math.cos(tank.angle) * tank.throttle * profile.speed * dt, Math.sin(tank.angle) * tank.throttle * profile.speed * dt);
+      tank.vx = (tank.x - oldX) / dt;
+      tank.vy = (tank.y - oldY) / dt;
+      const moved = Math.hypot(tank.x - oldX, tank.y - oldY);
+      tank.tread += moved;
+      if (tank.tread >= 8) { tank.tread = 0; this.tracks.push({ x: tank.x, y: tank.y, angle: tank.angle, life: 9 }); }
+      if (tank.id && tank.throttle && moved < .1) tank.stuck += dt; else tank.stuck = Math.max(0, tank.stuck - dt);
+      if (tank.fire) this.fire(tank);
+    }
+    this.updateBullets(dt);
+    if (this.config.powerups) this.updatePowerups(dt);
+    const alive = this.tanks.filter(t => t.alive);
+    if (alive.length <= 1 || this.elapsed >= 90) {
+      if (this.settleTimer === null) this.settleTimer = .65;
+      this.settleTimer -= dt;
+      if (this.settleTimer <= 0) this.finishRound(this.elapsed >= 90 && alive.length > 1 ? null : alive[0] || null);
+    }
+  }
+  moveTank(tank, dx, dy) {
+    const safe = (x, y) => !this.map.walls.some(w => circleWall(x, y, TANK_RADIUS, w)) && !this.tanks.some(t => t.id !== tank.id && t.alive && Math.hypot(t.x - x, t.y - y) < TANK_RADIUS * 2);
+    if (safe(tank.x + dx, tank.y)) tank.x += dx;
+    if (safe(tank.x, tank.y + dy)) tank.y += dy;
+  }
+  fire(tank) {
+    const active = this.bullets.filter(b => b.owner === tank.id).length;
+    if (tank.cooldown > 0 || active >= 5 || !tank.alive) return false;
+    const spread = tank.power === 'scatter' ? [-.17, 0, .17] : [0];
+    const error = tank.id ? (this.rng() - .5) * 2 * LEVELS[tank.difficulty].error : 0;
+    for (const offset of spread.slice(0, 5 - active)) {
+      const angle = tank.angle + offset + error;
+      const dx = Math.cos(angle), dy = Math.sin(angle);
+      // Place the muzzle before a wall if the barrel is pressed against it.
+      const hit = firstWall(this.map, tank.x, tank.y, dx * 24, dy * 24);
+      const length = hit ? Math.max(0, hit.t * 24 - .05) : 24;
+      this.bullets.push({ x: tank.x + dx * length, y: tank.y + dy * length, vx: dx * SHELL_SPEED, vy: dy * SHELL_SPEED, owner: tank.id, life: 7.5, age: 0, bounces: 0, trail: [], dead: false });
+    }
+    tank.cooldown = tank.power === 'rapid' ? .13 : tank.id ? LEVELS[tank.difficulty].cooldown : .32;
+    this.burst(tank.x + Math.cos(tank.angle) * 26, tank.y + Math.sin(tank.angle) * 26, '#f2d980', 4, 35, .18);
+    this.emit('fire', { id: tank.id });
+    return true;
+  }
+  updateBullets(dt) {
+    for (const shell of this.bullets) {
+      shell.age += dt;
+      shell.life -= dt;
+      shell.trail.push({ x: shell.x, y: shell.y });
+      if (shell.trail.length > 7) shell.trail.shift();
+      let remaining = dt;
+      for (let bounce = 0; bounce < 5 && remaining > 1e-6 && !shell.dead; bounce++) {
+        const dx = shell.vx * remaining, dy = shell.vy * remaining;
+        const wall = firstWall(this.map, shell.x, shell.y, dx, dy);
+        let target = null, hitTime = wall ? wall.t : 1.01;
+        for (const tank of this.tanks) {
+          if (!tank.alive || tank.id === shell.owner && shell.bounces === 0) continue;
+          const t = segmentCircle(shell.x, shell.y, dx, dy, tank, TANK_RADIUS + 2.5);
+          if (t !== null && t < hitTime) { target = tank; hitTime = t; }
+        }
+        if (target) {
+          shell.x += dx * hitTime; shell.y += dy * hitTime;
+          shell.dead = true;
+          if (target.shield) { target.shield = false; this.burst(target.x, target.y, '#b7d5d9', 17, 95, .5); this.emit('shield', { id: target.id }); }
+          else this.destroyTank(target, shell.owner);
+        } else if (wall) {
+          shell.x += dx * wall.t + wall.nx * .02;
+          shell.y += dy * wall.t + wall.ny * .02;
+          if (wall.nx) shell.vx *= -1;
+          if (wall.ny) shell.vy *= -1;
+          shell.bounces++;
+          remaining *= 1 - wall.t;
+          if (shell.bounces > 18) shell.dead = true;
+          this.burst(shell.x, shell.y, '#f5e4a1', 2, 36, .17);
+          this.emit('bounce');
+        } else { shell.x += dx; shell.y += dy; remaining = 0; }
+      }
+      if (shell.life <= 0 || shell.x < -5 || shell.y < -5 || shell.x > this.map.width + 5 || shell.y > this.map.height + 5) shell.dead = true;
+    }
+    this.bullets = this.bullets.filter(b => !b.dead);
+  }
+  destroyTank(tank, owner) {
+    tank.alive = false;
+    if (owner !== tank.id && this.tanks[owner]) this.tanks[owner].kills++;
+    this.burst(tank.x, tank.y, tank.color, 28, 125, .8);
+    this.burst(tank.x, tank.y, '#f4d384', 16, 150, .6);
+    this.shake = 5;
+    this.emit('destroy', { id: tank.id, owner });
+    this.emit('score');
+  }
+  finishRound(winner) {
+    if (winner) this.scores[winner.id]++;
+    this.winner = winner;
+    this.state = winner && this.config.target > 0 && this.scores[winner.id] >= this.config.target ? 'matchOver' : 'roundOver';
+    this.timer = 3.2;
+    this.emit('roundEnd', { winner: winner?.id ?? null, match: this.state === 'matchOver' });
+    this.emit('score');
+    this.emit('state');
+  }
+  lineOfSight(a, b) { return !firstWall(this.map, a.x, a.y, b.x - a.x, b.y - a.y, 5); }
+  // Predict the first tank a shot meets, including optional ricochets.
+  shotTarget(tank, angle, maxBounces = 0) {
+    let x = tank.x, y = tank.y;
+    let vx = Math.cos(angle), vy = Math.sin(angle), traveled = 0;
+    for (let bounce = 0; bounce <= maxBounces; bounce++) {
+      const dx = vx * 1100, dy = vy * 1100;
+      const wall = firstWall(this.map, x, y, dx, dy);
+      let first = wall ? wall.t : 1;
+      let target = null;
+      for (const other of this.tanks) {
+        if (!other.alive || other.id === tank.id && bounce === 0) continue;
+        const t = segmentCircle(x, y, dx, dy, other, TANK_RADIUS + (tank.difficulty === 'easy' ? 8 : 0));
+        if (t !== null && t < first) { first = t; target = other.id; }
+      }
+      traveled += first * 1100;
+      if (target !== null) return { id: target, distance: traveled };
+      if (!wall || traveled > SHELL_SPEED * 5) return null;
+      x += dx * wall.t + wall.nx * .03; y += dy * wall.t + wall.ny * .03;
+      if (wall.nx) vx *= -1;
+      if (wall.ny) vy *= -1;
+    }
+    return null;
+  }
+  think(tank) {
+    const profile = LEVELS[tank.difficulty];
+    const enemies = this.tanks.filter(t => t.alive && t.id !== tank.id);
+    if (!enemies.length) { tank.fire = false; tank.throttle = 0; tank.steer = 0; return; }
+    enemies.sort((a, b) => distance(a, tank) - distance(b, tank));
+    const visible = enemies.find(t => this.lineOfSight(tank, t));
+    const target = visible || enemies[0];
+    let desired, throttle = 1;
+    if (visible) {
+      const lead = profile.bank ? Math.min(.22, distance(tank, target) / SHELL_SPEED) : 0;
+      const predicted = { x: target.x + target.vx * lead, y: target.y + target.vy * lead };
+      desired = Math.atan2(predicted.y - tank.y, predicted.x - tank.x);
+      throttle = distance(tank, target) > 125 ? .85 : distance(tank, target) < 65 ? -.55 : .20;
+    } else {
+      const from = cellAt(this.map, tank.x, tank.y), to = cellAt(this.map, target.x, target.y);
+      const path = findPath(this.map, from, to);
+      let next = this.map.cells[path[1] ?? from];
+      // Center before a turn to keep the circular hull clear of maze corners.
+      const current = this.map.cells[from];
+      const cx = (current.x + .5) * CELL, cy = (current.y + .5) * CELL;
+      if (next.x !== current.x && Math.abs(tank.y - cy) > 9 || next.y !== current.y && Math.abs(tank.x - cx) > 9) next = current;
+      desired = Math.atan2((next.y + .5) * CELL - tank.y, (next.x + .5) * CELL - tank.x);
+    }
+    let difference = angleDiff(desired, tank.angle);
+    if (profile.bank && !visible && tank.cooldown <= 0 && this.rng() < .65) {
+      for (let i = 0; i < 13; i++) {
+        const candidate = tank.angle + (i - 6) * .19;
+        const hit = this.shotTarget(tank, candidate, 1);
+        if (hit && hit.id !== tank.id && hit.distance < 750) { desired = candidate; difference = angleDiff(desired, tank.angle); throttle = .1; break; }
+      }
+    }
+    if (profile.dodge) {
+      let danger = null, minThreat = 65;
+      for (const b of this.bullets) {
+        if (b.owner === tank.id && b.bounces === 0) continue;
+        const time = clamp(((tank.x - b.x) * b.vx + (tank.y - b.y) * b.vy) / SHELL_SPEED ** 2, 0, profile.bank ? .65 : .38);
+        const miss = Math.hypot(b.x + b.vx * time - tank.x, b.y + b.vy * time - tank.y);
+        if (miss < 27 && distance(b, tank) < 200 && miss < minThreat) { danger = b; minThreat = miss; }
+      }
+      if (danger) {
+        const projection = (tank.x - danger.x) * -danger.vy + (tank.y - danger.y) * danger.vx;
+        const dodgeAngle = Math.atan2(danger.vy, danger.vx) + (projection >= 0 ? Math.PI / 2 : -Math.PI / 2);
+        if (profile.bank || !visible) { difference = angleDiff(dodgeAngle, tank.angle); throttle = 1; }
+      }
+    }
+    tank.steer = Math.abs(difference) < .045 ? 0 : clamp(difference / (profile.turn * profile.reaction), -1, 1);
+    tank.throttle = Math.abs(difference) > 1 ? 0 : throttle;
+    if (tank.stuck > .7) { tank.throttle = -.65; tank.steer = 1; if (tank.stuck > 1.5) tank.stuck = 0; }
+    const hit = this.shotTarget(tank, tank.angle, profile.bank ? 1 : 0);
+    tank.fire = Boolean(hit && hit.id !== tank.id && hit.distance < (profile.bank ? 900 : 650));
+    if (tank.difficulty === 'easy' && this.rng() < .3) tank.fire = false;
+  }
+  updatePowerups(dt) {
+    this.powerTimer -= dt;
+    if (this.powerTimer <= 0 && this.powerups.length < 3) {
+      const candidates = this.map.cells.filter(c => this.tanks.every(t => !t.alive || Math.hypot(t.x - (c.x + .5) * CELL, t.y - (c.y + .5) * CELL) > 55));
+      const c = candidates[Math.floor(this.rng() * candidates.length)];
+      if (c) this.powerups.push({ x: (c.x + .5) * CELL, y: (c.y + .5) * CELL, type: ['shield', 'rapid', 'scatter'][Math.floor(this.rng() * 3)], life: 18 });
+      this.powerTimer = 7 + this.rng() * 3;
+    }
+    for (const p of this.powerups) {
+      p.life -= dt;
+      const tank = this.tanks.find(t => t.alive && distance(t, p) < 26);
+      if (!tank) continue;
+      if (p.type === 'shield') tank.shield = true;
+      else { tank.power = p.type; tank.powerTime = 7; }
+      p.life = 0;
+      this.burst(p.x, p.y, '#e4c56f', 10, 70, .4);
+      this.emit('pickup', { id: tank.id, power: p.type });
+    }
+    this.powerups = this.powerups.filter(p => p.life > 0);
+  }
+  burst(x, y, color, count, speed, life) {
+    for (let i = 0; i < count; i++) {
+      const a = this.rng() * Math.PI * 2, s = speed * (.25 + this.rng() * .75);
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: life * (.5 + this.rng() * .5), maxLife: life, color, size: 1.5 + this.rng() * 3 });
+    }
+  }
+  updateEffects(dt) {
+    for (const p of this.particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 1 - dt * 3; p.vy *= 1 - dt * 3; p.life -= dt; }
+    this.particles = this.particles.filter(p => p.life > 0);
+    for (const t of this.tracks) t.life -= dt;
+    this.tracks = this.tracks.filter(t => t.life > 0).slice(-700);
+    this.shake = Math.max(0, this.shake - dt * 18);
+  }
+}
