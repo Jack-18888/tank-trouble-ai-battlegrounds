@@ -42,12 +42,11 @@ try {
   await cdp('Page.navigate', { url: 'http://localhost:5173' });
   for (let i = 0; i < 50; i++) { if (await evaluate(`document.getElementById('start-button') && document.querySelector('.score-card') !== null`)) break; await delay(100); }
   await evaluate('document.fonts.ready'); await delay(400);
-  await screenshot('startup-diagnostic');
-  console.log('Loaded:', await evaluate('({url:location.href,title:document.title,text:document.body.innerText.slice(0,200)})'));
   await evaluate('localStorage.clear()');
   await cdp('Page.reload'); await delay(500);
   assert.equal(await evaluate(`document.querySelectorAll('.score-card').length`), 3);
   assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+  assert.equal(await evaluate(`Math.abs(document.getElementById('canvas-wrap').getBoundingClientRect().width-document.getElementById('scoreboard').getBoundingClientRect().width)<2`), true, 'arena does not fill its frame');
   await screenshot('desktop-ready');
   const firstSeed = await evaluate(`document.getElementById('map-seed').textContent`);
   await click('shuffle-button');
@@ -59,7 +58,9 @@ try {
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('[data-bot]')).every(s=>s.value==='hard')`), true);
   await evaluate(`var botSelect=document.querySelector('[data-bot="1"]'); botSelect.value='easy'; botSelect.dispatchEvent(new Event('change',{bubbles:true}))`);
   assert.equal(await evaluate(`document.getElementById('difficulty-status').textContent`), 'MIXED COMPANY');
+  const previewSeed = await evaluate(`document.getElementById('map-seed').textContent`);
   await click('start-button'); await delay(2900);
+  assert.equal(await evaluate(`document.getElementById('map-seed').textContent`), previewSeed, 'starting changed the selected maze');
   assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'LIVE MATCH');
   await key('ArrowUp', 'ArrowUp'); await key(' ', 'Space'); await delay(700);
   await key('ArrowUp', 'ArrowUp', 'keyUp'); await key(' ', 'Space', 'keyUp');
@@ -79,6 +80,9 @@ try {
   await cdp('Emulation.setTouchEmulationEnabled', { enabled: true }); await delay(200);
   assert.equal(await evaluate(`getComputedStyle(document.getElementById('touch-controls')).display`), 'flex');
   await screenshot('mobile-touch');
+  await size(1440, 900, false);
+  await cdp('Emulation.setTouchEmulationEnabled', { enabled: false }); await delay(200);
+  await screenshot('desktop-900');
   await click('sound-button');
   const muted = await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`);
   await cdp('Page.reload'); await delay(600);

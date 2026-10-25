@@ -87,11 +87,13 @@ function stateUI() {
   }
 }
 function start() {
-  sound.unlock(); keys.clear(); game = new Game(config); game.start();
+  sound.unlock(); keys.clear();
+  if (game.state !== 'ready') game = new Game(config);
+  game.start();
   scoreboard(); mapUI(); stateUI(); $('arena').focus({ preventScroll: true });
   $('round-toast').classList.remove('visible'); lastClock = '';
 }
-function quit() { keys.clear(); game = new Game(config); scoreboard(); mapUI(); stateUI(); settingsUI(); }
+function quit() { keys.clear(); toastUntil = 0; $('round-toast').classList.remove('visible'); game = new Game(config); scoreboard(); mapUI(); stateUI(); settingsUI(); }
 function pause() { keys.clear(); game.pause(); stateUI(); }
 
 $('start-button').addEventListener('click', start);
@@ -150,7 +152,7 @@ function handleEvents() {
     sound.play(event.type, event);
     if (event.type === 'state') stateUI();
     if (event.type === 'score') scoreboard();
-    if (event.type === 'map') { mapUI(); scoreboard(); $('field-note').textContent = notes[(game.round || 1) % notes.length]; }
+    if (event.type === 'map') { mapUI(); scoreboard(); $('field-note').textContent = notes[Math.max(0, game.round - 1) % notes.length]; }
     if (event.type === 'countdown') showOverlay(`<span class="countdown-number">${event.count || 'GO'}</span><p>ROUND ${String(game.round).padStart(2, '0')} · GET READY</p>`, true);
     if (event.type === 'go') { $('overlay').classList.add('hidden'); toast('ROLL OUT.', 1100); }
     if (event.type === 'pickup' && event.id === 0) toast(({ shield: 'SHIELD UP · ONE HIT BLOCKED', rapid: 'RAPID FIRE · 7 SECONDS', scatter: 'TRIPLE SHOT · 7 SECONDS' })[event.power]);

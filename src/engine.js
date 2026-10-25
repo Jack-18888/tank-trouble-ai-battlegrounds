@@ -27,6 +27,7 @@ export function randomGenerator(seed) {
 }
 
 export function generateMap(size = 'classic', density = 'balanced', seed = String(Date.now())) {
+  seed = String(seed).toUpperCase();
   const [cols, rows] = ({ compact: [10, 7], classic: [12, 8], large: [15, 10] })[size] || [12, 8];
   const rng = randomGenerator(seed);
   const cells = Array.from({ length: cols * rows }, (_, id) => ({ id, x: id % cols, y: Math.floor(id / cols), walls: [true, true, true, true] }));
@@ -134,7 +135,7 @@ export class Game {
   constructor(config = DEFAULT_CONFIG, seed) {
     this.events = [];
     this.config = this.validateConfig(config);
-    this.rng = randomGenerator(seed || Date.now());
+    this.rng = randomGenerator(seed ?? Date.now());
     this.scores = Array(this.config.opponents + 1).fill(0);
     this.round = 0;
     this.state = 'ready';
@@ -157,7 +158,7 @@ export class Game {
   drainEvents() { const events = this.events; this.events = []; return events; }
   seed() { return Math.floor(this.rng() * 2176782336).toString(36).padStart(6, '0').toUpperCase(); }
   prepareRound(seed) {
-    this.map = generateMap(this.config.size, this.config.density, seed || this.seed());
+    this.map = generateMap(this.config.size, this.config.density, seed ?? this.seed());
     this.bullets = [];
     this.powerups = [];
     this.particles = [];
@@ -187,9 +188,9 @@ export class Game {
     this.emit('map');
   }
   start() {
+    if (this.state !== 'ready') this.prepareRound();
     this.scores.fill(0);
     this.round = 1;
-    this.prepareRound();
     this.beginCountdown();
     this.emit('score');
   }
@@ -200,6 +201,7 @@ export class Game {
   }
   update(dt, input = {}) {
     dt = clamp(dt, 0, .04);
+    if (dt === 0) return;
     if (this.state === 'ready' || this.state === 'paused' || this.state === 'matchOver') return;
     this.updateEffects(dt);
     if (this.state === 'countdown') {

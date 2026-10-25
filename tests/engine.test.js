@@ -14,6 +14,15 @@ test('map seeds are reproducible and maze density changes the layout', () => {
   assert.deepEqual(generateMap('classic', 'balanced', 'hello'), generateMap('classic', 'balanced', 'hello'));
   assert.notDeepEqual(generateMap('classic', 'balanced', 'hello').walls, generateMap('classic', 'balanced', 'world').walls);
   assert.ok(generateMap('classic', 'dense', 'same').walls.length > generateMap('classic', 'open', 'same').walls.length);
+  const map = generateMap('classic', 'balanced', 'MixedCase');
+  assert.deepEqual(map, generateMap('classic', 'balanced', map.seed));
+});
+test('starting a match uses the maze shown in the setup preview', () => {
+  const game = new Game({}, 'preview');
+  const map = game.map, positions = game.tanks.map(t => [t.x, t.y]);
+  game.start();
+  assert.equal(game.map, map);
+  assert.deepEqual(game.tanks.map(t => [t.x, t.y]), positions);
 });
 test('all six tanks spawn clear of walls and one another', () => {
   for (let seed = 0; seed < 50; seed++) {
@@ -56,6 +65,30 @@ test('shells ricochet and a returning shell can eliminate its owner', () => {
   bullet.x = 125; bullet.y = 100;
   game.updateBullets(.08);
   assert.equal(game.tanks[0].alive, false);
+});
+test('bank-shot prediction and actual shell physics agree', () => {
+  const game = emptyArena();
+  const tank = game.tanks[0], target = game.tanks[1];
+  target.x = 350; target.y = 100;
+  const angle = Math.atan2(-188, 250);
+  tank.angle = angle;
+  assert.equal(game.shotTarget(tank, angle, 0), null);
+  assert.equal(game.shotTarget(tank, angle, 1)?.id, 1);
+  game.fire(tank);
+  for (let i = 0; i < 100 && target.alive; i++) game.updateBullets(.02);
+  assert.equal(target.alive, false);
+});
+test('triple-shot and rapid-fire pickups apply and expire', () => {
+  const game = emptyArena(), tank = game.tanks[0];
+  game.powerups.push({ x: tank.x, y: tank.y, type: 'scatter', life: 8 });
+  game.updatePowerups(.01);
+  assert.equal(tank.power, 'scatter');
+  game.fire(tank); assert.equal(game.bullets.length, 3);
+  game.powerups.push({ x: tank.x, y: tank.y, type: 'rapid', life: 8 });
+  game.updatePowerups(.01); tank.cooldown = 0; game.fire(tank);
+  assert.equal(tank.cooldown, .13);
+  tank.powerTime = .001; game.update(.01);
+  assert.equal(tank.power, null);
 });
 test('shield absorbs exactly one hit and the next hit eliminates the tank', () => {
   const game = emptyArena(), tank = game.tanks[0]; tank.shield = true;
