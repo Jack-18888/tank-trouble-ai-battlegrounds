@@ -88,6 +88,33 @@ try {
   await cdp('Page.reload'); await delay(600);
   assert.equal(await evaluate(`document.getElementById('opponent-count').textContent`), '5');
   assert.equal(await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`), muted);
+  // Exercise the actual engine and renderer in the reported wall-edge pose.
+  // This fixture exists only in the isolated QA browser, not in the game UI.
+  const corner = await evaluate(`(async () => {
+    const [{Game}, {Renderer}, geometry] = await Promise.all([import('/src/engine.js'), import('/src/renderer.js'), import('/src/geometry.js')]);
+    const g = new Game({opponents:1,powerups:false}, 'browser-corner');
+    const edge = {x1:32,y1:96,x2:128,y2:96};
+    g.map = {...g.map, cols:4, rows:3, width:256, height:192, walls:[edge], cells:g.map.cells.filter(c=>c.x<4&&c.y<3)};
+    const tank = g.tanks[0]; Object.assign(tank, {x:168,y:102,angle:-3*Math.PI/4,cooldown:0});
+    g.tanks[1].alive=false;
+    for(let i=0;i<40;i++)g.moveTank(tank,-1,0);
+    const fired=g.fire(tank);
+    for(let i=0;i<12;i++)g.updateBullets(1/120);
+    document.querySelector('.site-wrap').style.display='none';
+    document.body.insertAdjacentHTML('beforeend','<main style="max-width:800px;margin:32px auto"><h1 style="font-size:36px">Clear barrel. Clean shot.</h1><p style="margin:12px 0 24px">Wall-edge regression: tracks stop at the wall, the shell clears the muzzle, and the tank survives.</p><canvas id="corner-qa" style="width:768px;height:576px;max-width:100%;background:#dce3c8;border-radius:8px"></canvas></main>');
+    const painter=new Renderer(document.getElementById('corner-qa'));
+    window.__cornerQa={g,painter};
+    painter.draw(g,0);
+    return {fired,alive:tank.alive,bounces:g.bullets[0]?.bounces,blocked:geometry.tankWall({...tank,x:tank.x-1},edge),x:tank.x};
+  })()`);
+  assert.equal(corner.fired, true);
+  assert.equal(corner.alive, true);
+  assert.equal(corner.bounces, 0);
+  assert.equal(corner.blocked, true);
+  await delay(100);
+  // ResizeObserver clears its canvas while adjusting backing resolution.
+  await evaluate(`window.__cornerQa.painter.draw(window.__cornerQa.g,0)`);
+  await screenshot('wall-edge-fixed');
   assert.deepEqual(errors, [], 'browser logged errors');
-  console.log(JSON.stringify({ passed: true, checks: ['startup', 'maze shuffle', '1–5 opponents', 'difficulty presets', 'individual bot difficulty', 'countdown', 'keyboard movement and fire', 'pause', 'help modal', '390 / 768 / 1100 / 1440 layouts', 'touch controls', 'saved preferences', 'no runtime errors'], screenshots: path.resolve('.qa') }, null, 2));
+  console.log(JSON.stringify({ passed: true, checks: ['startup', 'maze shuffle', '1–5 opponents', 'difficulty presets', 'individual bot difficulty', 'countdown', 'keyboard movement and fire', 'pause', 'help modal', '390 / 768 / 1100 / 1440 layouts', 'touch controls', 'saved preferences', 'wall-edge firing regression', 'no runtime errors'], screenshots: path.resolve('.qa') }, null, 2));
 } finally { if (ws?.readyState === 1) ws.close(); browser.kill(); }

@@ -1,7 +1,9 @@
 // Pure simulation: no DOM, canvas, audio, or frame-rate dependent movement.
+import { tankWall, tanksOverlap, sweepWall, sweepTank, muzzlePosition, SHELL_RADIUS } from './geometry.js';
 export const CELL = 64;
-export const TANK_RADIUS = 13;
-export const SHELL_SPEED = 268;
+export const PLAYER_SPEED = 114;
+export const SHELL_SPEED = 140;
+export const SHELL_LIFETIME = 7.5;
 export const COLORS = ['#376b48', '#d17a4d', '#b39b40', '#5e889e', '#9680ad', '#bd6877'];
 export const NAMES = ['You', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
 export const LEVELS = {
@@ -91,44 +93,13 @@ export function findPath(map, start, end) {
   return [];
 }
 
-export function circleWall(x, y, radius, wall) {
-  const cx = clamp(x, wall.x, wall.x + wall.w);
-  const cy = clamp(y, wall.y, wall.y + wall.h);
-  return (x - cx) ** 2 + (y - cy) ** 2 < radius ** 2;
-}
-
-// Sweep a shell against expanded wall rectangles, returning the earliest impact.
-export function firstWall(map, x, y, dx, dy, radius = 3) {
+export function firstWall(map, x, y, dx, dy, radius = SHELL_RADIUS) {
   let result = null;
   for (const wall of map.walls) {
-    let enter = -Infinity, leave = Infinity, nx = 0, ny = 0, valid = true;
-    for (const axis of ['x', 'y']) {
-      const p = axis === 'x' ? x : y;
-      const d = axis === 'x' ? dx : dy;
-      const min = wall[axis] - radius;
-      const max = wall[axis] + wall[axis === 'x' ? 'w' : 'h'] + radius;
-      if (Math.abs(d) < 1e-10) { if (p < min || p > max) valid = false; continue; }
-      const a = (min - p) / d, b = (max - p) / d;
-      const near = Math.min(a, b), far = Math.max(a, b);
-      if (near > enter + 1e-8) { enter = near; nx = axis === 'x' ? -Math.sign(d) : 0; ny = axis === 'y' ? -Math.sign(d) : 0; }
-      else if (Math.abs(near - enter) < 1e-8) { if (axis === 'x') nx = -Math.sign(d); else ny = -Math.sign(d); }
-      leave = Math.min(leave, far);
-    }
-    if (valid && enter <= leave && leave >= 0 && enter >= -1e-8 && enter <= 1 && (!result || enter < result.t)) result = { t: Math.max(0, enter), nx, ny, wall };
+    const hit = sweepWall(x, y, dx, dy, wall, radius);
+    if (hit && (!result || hit.t < result.t)) result = { ...hit, wall };
   }
   return result;
-}
-
-function segmentCircle(x, y, dx, dy, tank, radius) {
-  const ox = x - tank.x, oy = y - tank.y;
-  const a = dx * dx + dy * dy;
-  const c = ox * ox + oy * oy - radius * radius;
-  if (c < 0) return 0;
-  const b = 2 * (ox * dx + oy * dy);
-  const disc = b * b - 4 * a * c;
-  if (disc < 0 || a < 1e-10) return null;
-  const t = (-b - Math.sqrt(disc)) / (2 * a);
-  return t >= 0 && t <= 1 ? t : null;
 }
 
 export class Game {
@@ -230,15 +201,15 @@ export class Game {
         tank.think -= dt;
         if (tank.think <= 0) { this.think(tank); tank.think = LEVELS[tank.difficulty].reaction * (.85 + this.rng() * .3); }
       }
-      const profile = tank.id ? LEVELS[tank.difficulty] : { speed: 114, turn: 3.7 };
-      tank.angle += tank.steer * profile.turn * dt;
+      const profile = tank.id ? LEVELS[tank.difficulty] : { speed: PLAYER_SPEED, turn: 3.7 };
+      const rotated = this.turnTank(tank, tank.steer * profile.turn * dt);
       this.moveTank(tank, Math.cos(tank.angle) * tank.throttle * profile.speed * dt, Math.sin(tank.angle) * tank.throttle * profile.speed * dt);
       tank.vx = (tank.x - oldX) / dt;
       tank.vy = (tank.y - oldY) / dt;
       const moved = Math.hypot(tank.x - oldX, tank.y - oldY);
       tank.tread += moved;
       if (tank.tread >= 8) { tank.tread = 0; this.tracks.push({ x: tank.x, y: tank.y, angle: tank.angle, life: 9 }); }
-      if (tank.id && tank.throttle && moved < .1) tank.stuck += dt; else tank.stuck = Math.max(0, tank.stuck - dt);
+      if (tank.id && (tank.throttle && moved < .1 || tank.steer && !rotated)) tank.stuck += dt; else tank.stuck = Math.max(0, tank.stuck - dt);
       if (tank.fire) this.fire(tank);
     }
     this.updateBullets(dt);
@@ -250,26 +221,43 @@ export class Game {
       if (this.settleTimer <= 0) this.finishRound(this.elapsed >= 90 && alive.length > 1 ? null : alive[0] || null);
     }
   }
+  canPlaceTank(tank) {
+    return !this.map.walls.some(w => tankWall(tank, w)) && !this.tanks.some(t => t.id !== tank.id && t.alive && tanksOverlap(t, tank));
+  }
+  turnTank(tank, angle) {
+    if (!angle) return true;
+    const steps = Math.ceil(Math.abs(angle) / .04);
+    for (let i = 0; i < steps; i++) {
+      const pose = { ...tank, angle: tank.angle + angle / steps };
+      if (!this.canPlaceTank(pose)) return false;
+      tank.angle = pose.angle;
+    }
+    return true;
+  }
   moveTank(tank, dx, dy) {
-    const safe = (x, y) => !this.map.walls.some(w => circleWall(x, y, TANK_RADIUS, w)) && !this.tanks.some(t => t.id !== tank.id && t.alive && Math.hypot(t.x - x, t.y - y) < TANK_RADIUS * 2);
-    if (safe(tank.x + dx, tank.y)) tank.x += dx;
-    if (safe(tank.x, tank.y + dy)) tank.y += dy;
+    // Subdivide long moves as well as checking both axes, so the full hull
+    // slides along walls without tunneling through them.
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 2));
+    for (let i = 0; i < steps; i++) {
+      if (this.canPlaceTank({ ...tank, x: tank.x + dx / steps })) tank.x += dx / steps;
+      if (this.canPlaceTank({ ...tank, y: tank.y + dy / steps })) tank.y += dy / steps;
+    }
   }
   fire(tank) {
     const active = this.bullets.filter(b => b.owner === tank.id).length;
     if (tank.cooldown > 0 || active >= 5 || !tank.alive) return false;
+    const muzzle = muzzlePosition(tank);
+    // Never clamp a shell back into its own hull. A blocked muzzle cannot fire.
+    if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return false;
     const spread = tank.power === 'scatter' ? [-.17, 0, .17] : [0];
     const error = tank.id ? (this.rng() - .5) * 2 * LEVELS[tank.difficulty].error : 0;
     for (const offset of spread.slice(0, 5 - active)) {
       const angle = tank.angle + offset + error;
       const dx = Math.cos(angle), dy = Math.sin(angle);
-      // Place the muzzle before a wall if the barrel is pressed against it.
-      const hit = firstWall(this.map, tank.x, tank.y, dx * 24, dy * 24);
-      const length = hit ? Math.max(0, hit.t * 24 - .05) : 24;
-      this.bullets.push({ x: tank.x + dx * length, y: tank.y + dy * length, vx: dx * SHELL_SPEED, vy: dy * SHELL_SPEED, owner: tank.id, life: 7.5, age: 0, bounces: 0, trail: [], dead: false });
+      this.bullets.push({ ...muzzle, vx: dx * SHELL_SPEED, vy: dy * SHELL_SPEED, owner: tank.id, life: SHELL_LIFETIME, age: 0, bounces: 0, trail: [], dead: false });
     }
     tank.cooldown = tank.power === 'rapid' ? .13 : tank.id ? LEVELS[tank.difficulty].cooldown : .32;
-    this.burst(tank.x + Math.cos(tank.angle) * 26, tank.y + Math.sin(tank.angle) * 26, '#f2d980', 4, 35, .18);
+    this.burst(muzzle.x, muzzle.y, '#f2d980', 4, 35, .18);
     this.emit('fire', { id: tank.id });
     return true;
   }
@@ -286,7 +274,7 @@ export class Game {
         let target = null, hitTime = wall ? wall.t : 1.01;
         for (const tank of this.tanks) {
           if (!tank.alive || tank.id === shell.owner && shell.bounces === 0) continue;
-          const t = segmentCircle(shell.x, shell.y, dx, dy, tank, TANK_RADIUS + 2.5);
+          const t = sweepTank(shell.x, shell.y, dx, dy, tank);
           if (t !== null && t < hitTime) { target = tank; hitTime = t; }
         }
         if (target) {
@@ -297,8 +285,9 @@ export class Game {
         } else if (wall) {
           shell.x += dx * wall.t + wall.nx * .02;
           shell.y += dy * wall.t + wall.ny * .02;
-          if (wall.nx) shell.vx *= -1;
-          if (wall.ny) shell.vy *= -1;
+          const normalSpeed = shell.vx * wall.nx + shell.vy * wall.ny;
+          shell.vx -= 2 * normalSpeed * wall.nx;
+          shell.vy -= 2 * normalSpeed * wall.ny;
           shell.bounces++;
           remaining *= 1 - wall.t;
           if (shell.bounces > 18) shell.dead = true;
@@ -331,24 +320,28 @@ export class Game {
   lineOfSight(a, b) { return !firstWall(this.map, a.x, a.y, b.x - a.x, b.y - a.y, 5); }
   // Predict the first tank a shot meets, including optional ricochets.
   shotTarget(tank, angle, maxBounces = 0) {
-    let x = tank.x, y = tank.y;
+    const muzzle = muzzlePosition(tank, angle);
+    if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return null;
+    let { x, y } = muzzle;
     let vx = Math.cos(angle), vy = Math.sin(angle), traveled = 0;
     for (let bounce = 0; bounce <= maxBounces; bounce++) {
-      const dx = vx * 1100, dy = vy * 1100;
+      const range = SHELL_SPEED * SHELL_LIFETIME - traveled;
+      const dx = vx * range, dy = vy * range;
       const wall = firstWall(this.map, x, y, dx, dy);
       let first = wall ? wall.t : 1;
       let target = null;
       for (const other of this.tanks) {
         if (!other.alive || other.id === tank.id && bounce === 0) continue;
-        const t = segmentCircle(x, y, dx, dy, other, TANK_RADIUS + (tank.difficulty === 'easy' ? 8 : 0));
+        const t = sweepTank(x, y, dx, dy, other);
         if (t !== null && t < first) { first = t; target = other.id; }
       }
-      traveled += first * 1100;
+      traveled += first * range;
       if (target !== null) return { id: target, distance: traveled };
-      if (!wall || traveled > SHELL_SPEED * 5) return null;
+      if (!wall || traveled >= SHELL_SPEED * SHELL_LIFETIME) return null;
       x += dx * wall.t + wall.nx * .03; y += dy * wall.t + wall.ny * .03;
-      if (wall.nx) vx *= -1;
-      if (wall.ny) vy *= -1;
+      const normalSpeed = vx * wall.nx + vy * wall.ny;
+      vx -= 2 * normalSpeed * wall.nx;
+      vy -= 2 * normalSpeed * wall.ny;
     }
     return null;
   }
@@ -369,10 +362,10 @@ export class Game {
       const from = cellAt(this.map, tank.x, tank.y), to = cellAt(this.map, target.x, target.y);
       const path = findPath(this.map, from, to);
       let next = this.map.cells[path[1] ?? from];
-      // Center before a turn to keep the circular hull clear of maze corners.
+      // Center before a turn to keep the tracks and barrel clear of corners.
       const current = this.map.cells[from];
       const cx = (current.x + .5) * CELL, cy = (current.y + .5) * CELL;
-      if (next.x !== current.x && Math.abs(tank.y - cy) > 9 || next.y !== current.y && Math.abs(tank.x - cx) > 9) next = current;
+      if (next.x !== current.x && Math.abs(tank.y - cy) > 4 || next.y !== current.y && Math.abs(tank.x - cx) > 4) next = current;
       desired = Math.atan2((next.y + .5) * CELL - tank.y, (next.x + .5) * CELL - tank.x);
     }
     let difference = angleDiff(desired, tank.angle);

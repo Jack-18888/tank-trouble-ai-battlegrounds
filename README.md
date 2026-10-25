@@ -41,6 +41,8 @@ Touchscreens get a direction pad and a fire button. The arena also supports full
 - First to 3, 5, or 10 round wins, or endless play. A 90-second round limit resolves stalemates as a draw.
 - Optional shield, rapid-fire, and triple-shot pickups.
 - Five active shells per tank; ricochets can hit the tank that fired them.
+- Shells travel about 23% faster than the player tank, leaving room to dodge.
+- Tracks, hulls, and barrels use their rendered, rotated shapes for collisions. Shells start beyond the muzzle; a blocked muzzle does not fire a shell back inside the tank.
 - Sound effects, saved match preferences, round scoring, and match results.
 
 Match play runs locally, and preferences use browser local storage. There are no accounts, servers, telemetry, or multiplayer connections in the game itself. Google Fonts is optional; local fallback fonts keep the game playable offline.
@@ -49,10 +51,12 @@ Match play runs locally, and preferences use browser local storage. There are no
 
 - `src/engine.js`: DOM-free simulation, seeded maze generation, pathfinding, bot decisions, swept projectile collisions, power-ups, and match state.
 - `src/renderer.js`: cached maze rendering, tanks, shells, tracks, and particles.
+- `src/geometry.js`: shared tank silhouettes and exact rounded-wall collision geometry.
 - `src/main.js`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
 - `src/audio.js`: synthesized Web Audio effects.
 - `src/style.css`: responsive arcade interface and reduced-motion support.
 - `tests/engine.test.js`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
+- `tests/collision-regressions.test.js`: wall-edge firing, muzzle clearance, rotated hitboxes, rounded wall caps, and relative shell/tank travel speed.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, generateMap, neighbors, findPath, circleWall, firstWall, distance, SHELL_SPEED, TANK_RADIUS } from '../src/engine.js';
+import { Game, generateMap, neighbors, findPath, firstWall, distance, SHELL_SPEED } from '../src/engine.js';
+import { tankWall, tanksOverlap } from '../src/geometry.js';
 
 test('procedural mazes stay connected across 270 seeds, sizes, and densities', () => {
   for (const size of ['compact', 'classic', 'large']) for (const density of ['open', 'balanced', 'dense']) for (let seed = 0; seed < 30; seed++) {
@@ -28,8 +29,8 @@ test('all six tanks spawn clear of walls and one another', () => {
   for (let seed = 0; seed < 50; seed++) {
     const game = new Game({ opponents: 5, size: 'compact', density: 'dense' }, seed);
     for (const tank of game.tanks) {
-      assert.ok(game.map.walls.every(w => !circleWall(tank.x, tank.y, TANK_RADIUS, w)));
-      assert.ok(game.tanks.every(t => tank.id === t.id || distance(t, tank) > TANK_RADIUS * 2));
+      assert.ok(game.map.walls.every(w => !tankWall(tank, w)));
+      assert.ok(game.tanks.every(t => tank.id === t.id || !tanksOverlap(t, tank)));
     }
   }
 });
@@ -44,10 +45,10 @@ function emptyArena() {
 test('tank hulls cannot pass through walls or through another tank', () => {
   const game = emptyArena(), tank = game.tanks[0];
   for (let i = 0; i < 200; i++) game.moveTank(tank, -2, 0);
-  assert.ok(tank.x >= TANK_RADIUS + 3);
+  assert.ok(game.map.walls.every(w => !tankWall(tank, w)));
   tank.x = 100; game.tanks[1].x = 140; game.tanks[1].y = 100;
   for (let i = 0; i < 80; i++) game.moveTank(tank, 2, 0);
-  assert.ok(distance(tank, game.tanks[1]) >= TANK_RADIUS * 2);
+  assert.equal(tanksOverlap(tank, game.tanks[1]), false);
 });
 test('swept wall collisions detect a wall even across a long movement', () => {
   const game = emptyArena();
@@ -70,12 +71,12 @@ test('bank-shot prediction and actual shell physics agree', () => {
   const game = emptyArena();
   const tank = game.tanks[0], target = game.tanks[1];
   target.x = 350; target.y = 100;
-  const angle = Math.atan2(-188, 250);
+  const angle = Math.atan2(-2 * (100 - 5.7), 250);
   tank.angle = angle;
   assert.equal(game.shotTarget(tank, angle, 0), null);
   assert.equal(game.shotTarget(tank, angle, 1)?.id, 1);
   game.fire(tank);
-  for (let i = 0; i < 100 && target.alive; i++) game.updateBullets(.02);
+  for (let i = 0; i < 200 && target.alive; i++) game.updateBullets(.02);
   assert.equal(target.alive, false);
 });
 test('triple-shot and rapid-fire pickups apply and expire', () => {
@@ -92,7 +93,7 @@ test('triple-shot and rapid-fire pickups apply and expire', () => {
 });
 test('shield absorbs exactly one hit and the next hit eliminates the tank', () => {
   const game = emptyArena(), tank = game.tanks[0]; tank.shield = true;
-  const shot = () => { game.bullets.push({ x: 65, y: 100, vx: SHELL_SPEED, vy: 0, owner: 1, life: 7, age: 0, bounces: 0, trail: [] }); game.updateBullets(.1); };
+  const shot = () => { game.bullets.push({ x: 65, y: 100, vx: SHELL_SPEED, vy: 0, owner: 1, life: 7, age: 0, bounces: 0, trail: [] }); game.updateBullets(.2); };
   shot(); assert.equal(tank.alive, true); assert.equal(tank.shield, false);
   shot(); assert.equal(tank.alive, false);
 });
@@ -117,7 +118,6 @@ test('rounds award scores, finish matches, and handle draws', () => {
 for (const difficulty of ['easy', 'medium', 'hard']) test(`${difficulty} bots navigate a maze and engage enemies`, () => {
   const game = new Game({ opponents: 3, difficulties: [difficulty, difficulty, difficulty], powerups: false, target: 3 }, `bot-${difficulty}`);
   game.start();
-  const start = game.tanks.map(t => ({ x: t.x, y: t.y }));
   let traveled = 0, shots = 0, kills = 0;
   for (let i = 0; i < 60 * 40; i++) {
     const before = { x: game.tanks[1].x, y: game.tanks[1].y };
@@ -125,7 +125,7 @@ for (const difficulty of ['easy', 'medium', 'hard']) test(`${difficulty} bots na
     traveled += distance(before, game.tanks[1]);
     for (const e of game.drainEvents()) { if (e.type === 'fire') shots++; if (e.type === 'destroy') kills++; }
     if (game.state === 'matchOver') break;
-    for (const tank of game.tanks.filter(t => t.alive)) assert.ok(game.map.walls.every(w => !circleWall(tank.x, tank.y, TANK_RADIUS - .1, w)), 'bot crossed a wall');
+    for (const tank of game.tanks.filter(t => t.alive)) assert.ok(game.map.walls.every(w => !tankWall(tank, w)), 'bot crossed a wall');
   }
   assert.ok(traveled > 100, `bot moved only ${traveled}`);
   assert.ok(shots > 0, 'bots never fired');

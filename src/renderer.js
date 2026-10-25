@@ -1,4 +1,5 @@
 import { CELL, COLORS } from './engine.js';
+import { TANK_SHAPES, SHELL_RADIUS, WALL_RADIUS } from './geometry.js';
 
 export function tankIcon(color, className = '') {
   return `<svg class="${className}" viewBox="0 0 32 36" aria-hidden="true"><rect x="3" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="23" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="10" y="13" width="12" height="18" rx="3" fill="${color}"/><circle cx="16" cy="20" r="5" fill="${color}" stroke="#f6f5ef" stroke-width="1"/><rect x="14" y="2" width="4" height="18" rx="1" fill="${color}"/></svg>`;
@@ -53,7 +54,7 @@ export class Renderer {
       }
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#faf1bd'; ctx.beginPath(); ctx.arc(shell.x, shell.y, 4.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#455034'; ctx.beginPath(); ctx.arc(shell.x, shell.y, 2.7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#455034'; ctx.beginPath(); ctx.arc(shell.x, shell.y, SHELL_RADIUS, 0, Math.PI * 2); ctx.fill();
     }
     for (const tank of game.tanks.filter(t => t.alive)) this.drawTank(tank, time, game);
     for (const p of game.particles) {
@@ -87,7 +88,7 @@ export class Renderer {
       ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath();
       for (const wall of map.walls) { ctx.moveTo(wall.x1, wall.y1 + yOffset); ctx.lineTo(wall.x2, wall.y2 + yOffset); } ctx.stroke();
     };
-    walls('#66784c30', 9, 4); walls('#52623f', 6, 0); walls('#819064', 1, -1.5);
+    walls('#66784c30', 9, 4); walls('#52623f', WALL_RADIUS * 2, 0); walls('#819064', 1, -1.5);
     ctx.fillStyle = '#b3bd96';
     for (const cell of map.cells) {
       if (cell.x % 3 === 0 && cell.y % 3 === 0 && cell.walls[0] && cell.walls[3]) { ctx.beginPath(); ctx.arc(cell.x * CELL, cell.y * CELL, 1.2, 0, Math.PI * 2); ctx.fill(); }
@@ -107,14 +108,15 @@ export class Renderer {
     ctx.save(); ctx.translate(tank.x, tank.y); ctx.rotate(tank.angle);
     ctx.fillStyle = '#34402b20'; ctx.beginPath(); ctx.ellipse(1, 4, 19, 14, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#394333';
-    this.roundRect(-16, -14, 31, 7, 2); this.roundRect(-16, 7, 31, 7, 2);
+    for (const shape of TANK_SHAPES.slice(0, 2)) this.roundRect(shape.x, shape.y, shape.w, shape.h, shape.r);
     ctx.fillStyle = '#718164';
     const tread = Math.floor(tank.tread / 3) % 2;
     for (let x = -12 + tread * 2; x < 14; x += 5) { ctx.fillRect(x, -13, 1.5, 5); ctx.fillRect(x, 8, 1.5, 5); }
-    ctx.fillStyle = tank.color; this.roundRect(-13, -9, 26, 18, 3);
+    const hull = TANK_SHAPES[2], barrel = TANK_SHAPES[3];
+    ctx.fillStyle = tank.color; this.roundRect(hull.x, hull.y, hull.w, hull.h, hull.r);
     ctx.fillStyle = '#ffffff2a'; this.roundRect(-10, -7, 21, 3, 1);
     ctx.fillStyle = '#00000015'; ctx.fillRect(-10, 6, 21, 2);
-    ctx.fillStyle = '#344332'; this.roundRect(0, -3, 25, 6, 1.3);
+    ctx.fillStyle = '#344332'; this.roundRect(barrel.x, barrel.y, barrel.w, barrel.h, barrel.r);
     ctx.fillStyle = tank.color; ctx.fillRect(4, -2, 17, 4);
     ctx.fillStyle = tank.color; ctx.beginPath(); ctx.arc(-1, 0, 7.8, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#f5f4d975'; ctx.lineWidth = 1; ctx.stroke();
