@@ -124,7 +124,7 @@
                 </button>
               </div>
             </div>
-            <div class="below-arena">
+            <div class="below-arena" id="below-arena">
               <div class="keyboard-legend">
                 <span class="key-group"
                   ><kbd>W</kbd
@@ -134,6 +134,9 @@
                 ><span class="legend-divider"></span><kbd>ESC</kbd><b>Pause</b>
               </div>
               <span class="friendly-warning">Your bullets bite back. <span>↗</span></span>
+              <span class="spectator-note" id="spectator-note" hidden>
+                <span>BOT BATTLE · JUST WATCH</span><span><kbd>ESC</kbd> Pause</span>
+              </span>
             </div>
             <div class="field-note">
               <span class="note-number">FIELD NOTE / 01</span>
@@ -154,12 +157,12 @@
             </div>
             <div class="setting-block">
               <div class="setting-heading">
-                <label>Opponents</label><span class="setting-hint">THE MORE, THE MESSIER</span>
+                <label>Tanks</label><span class="setting-hint">THE MORE, THE MESSIER</span>
               </div>
-              <div class="opponent-stepper">
-                <button id="opponent-minus" aria-label="Remove opponent">−</button>
-                <div><strong id="opponent-count">2</strong><span>BOT OPPONENTS</span></div>
-                <button id="opponent-plus" aria-label="Add opponent">+</button>
+              <div class="tank-stepper">
+                <button id="tank-minus" aria-label="Remove tank">−</button>
+                <div><strong id="tank-count">3</strong><span>TOTAL TANKS</span></div>
+                <button id="tank-plus" aria-label="Add tank">+</button>
               </div>
             </div>
             <div class="setting-block difficulty-block">
@@ -176,7 +179,8 @@
               <p class="setting-description" id="difficulty-description">
                 Quick on the trigger. A little less forgiving.
               </p>
-              <div class="bot-roster" id="bot-roster"></div>
+              <p class="roster-hint">One human, or all bots. Choose who takes the wheel.</p>
+              <div class="player-roster" id="player-roster"></div>
             </div>
             <div class="setting-block map-settings">
               <div class="setting-heading">
@@ -262,8 +266,8 @@
         </button>
         <p class="eyebrow">THE SURVIVAL GUIDE</p>
         <h2>Welcome to the trouble.</h2>
-        <p>
-          Drive your green tank through the maze. Eliminate the other tanks and be the last one
+        <p id="help-intro">
+          Drive the tank marked YOU through the maze. Eliminate the other tanks and be the last one
           standing to score a round win.
         </p>
         <div class="help-controls">
@@ -272,13 +276,14 @@
           <p><kbd>SPACE</kbd> Fire &nbsp; <kbd>ESC</kbd> Pause / resume</p>
         </div>
         <p>
-          <strong>Mind the ricochet.</strong> You can have five shells in flight. Shells bounce off
-          walls, last about eight seconds, and can destroy your own tank after a bounce.
+          <strong>Mind the ricochet.</strong> Each tank can have five shells in flight. Shells
+          bounce off walls, last about eight seconds, and can destroy the tank that fired them after
+          a bounce.
         </p>
         <p>
-          <strong>Pick your trouble.</strong> Easy bots react slowly. Medium bots hunt you through
-          the maze. Hard bots dodge shells and calculate bank shots. Set each bot’s difficulty
-          separately for a mixed match.
+          <strong>Pick your trouble.</strong> Easy bots react slowly. Medium bots navigate the maze.
+          Hard bots dodge shells and calculate bank shots. Choose a controller for every tank: one
+          human at most, or all bots to watch them battle.
         </p>
         <div class="powerup-guide">
           <span><b class="power-shield">◇</b> Shield · blocks one hit</span

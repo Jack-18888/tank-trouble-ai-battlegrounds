@@ -27,15 +27,20 @@ test('untyped saved settings are validated before entering the typed simulation'
   };
   const config = validateGameConfig(raw);
   assert.deepEqual(config, {
-    opponents: 5,
-    difficulties: ['medium', 'hard', 'medium', 'easy', 'medium'],
+    players: [
+      { kind: 'human' },
+      ...['medium', 'hard', 'medium', 'easy', 'medium'].map((botId) => ({
+        kind: 'bot' as const,
+        botId,
+      })),
+    ],
     target: 3,
     size: 'classic',
     density: 'balanced',
     powerups: false,
   });
   const game = new Game(config, 'validated-settings');
-  assert.equal(game.bots.size, 5);
+  assert.equal(game.players.size, 6);
 });
 
 test('procedural mazes stay connected across 270 seeds, sizes, and densities', () => {
@@ -84,7 +89,17 @@ test('starting a match uses the maze shown in the setup preview', () => {
 });
 test('all six tanks spawn clear of walls and one another', () => {
   for (let seed = 0; seed < 50; seed++) {
-    const game = new Game({ opponents: 5, size: 'compact', density: 'dense' }, seed);
+    const game = new Game(
+      {
+        players: [
+          { kind: 'human' },
+          ...Array.from({ length: 5 }, () => ({ kind: 'bot' as const, botId: 'medium' })),
+        ],
+        size: 'compact',
+        density: 'dense',
+      },
+      seed,
+    );
     for (const tank of game.tanks) {
       assert.ok(game.map.walls.every((w) => !tankWall(tank, w)));
       assert.ok(game.tanks.every((t) => tank.id === t.id || !tanksOverlap(t, tank)));
@@ -92,7 +107,14 @@ test('all six tanks spawn clear of walls and one another', () => {
   }
 });
 function emptyArena() {
-  const game = new Game({ opponents: 1, target: 3, powerups: false }, 'physics');
+  const game = new Game(
+    {
+      players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
+      target: 3,
+      powerups: false,
+    },
+    'physics',
+  );
   game.map.walls = game.map.walls.filter((w) => w.border);
   game.state = 'playing';
   Object.assign(game.tanks[0], { x: 100, y: 100, angle: 0, cooldown: 0 });
@@ -227,8 +249,10 @@ for (const difficulty of ['easy', 'medium', 'hard'])
   test(`${difficulty} bots navigate a maze and engage enemies`, () => {
     const game = new Game(
       {
-        opponents: 3,
-        difficulties: [difficulty, difficulty, difficulty],
+        players: [
+          { kind: 'human' },
+          ...[difficulty, difficulty, difficulty].map((botId) => ({ kind: 'bot' as const, botId })),
+        ],
         powerups: false,
         target: 3,
       },

@@ -1,14 +1,14 @@
-import { Bot } from './bot.ts';
+import { AbstractPlayer } from '../players/abstract-player.ts';
 import { CombatStrategy } from './combat.ts';
-import type { BotContext, BotDecision } from './types.ts';
+import type { PlayerContext, PlayerDecision } from '../players/types.ts';
 
-export class HardBot extends Bot {
+export class HardBot extends AbstractPlayer {
   private readonly strategy = new CombatStrategy(this.profile, { dodge: true, bank: true });
   constructor() {
     super({ speed: 108, turn: 3.9, reaction: 0.11, error: 0.012, cooldown: 0.46 });
   }
 
-  override decide(context: BotContext): BotDecision {
-    return this.strategy.decide(context);
+  override decide({ observe }: PlayerContext): PlayerDecision {
+    return this.strategy.decide(observe());
   }
 }

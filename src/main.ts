@@ -2,6 +2,7 @@ import { Game, DEFAULT_CONFIG, COLORS, NAMES, validateGameConfig } from './engin
 import { getBotType, getBotTypes, hasBot } from './bots/index.ts';
 import { Renderer, tankIcon } from './renderer.ts';
 import { Sound } from './audio.ts';
+import { assignController } from './players/index.ts';
 
 interface Controls {
   arena: HTMLCanvasElement;
@@ -10,8 +11,8 @@ interface Controls {
   'win-target': HTMLSelectElement;
   powerups: HTMLInputElement;
   'pause-button': HTMLButtonElement;
-  'opponent-minus': HTMLButtonElement;
-  'opponent-plus': HTMLButtonElement;
+  'tank-minus': HTMLButtonElement;
+  'tank-plus': HTMLButtonElement;
   'help-dialog': HTMLDialogElement;
 }
 function $<K extends keyof Controls>(id: K): Controls[K];
@@ -52,7 +53,7 @@ let accumulator = 0,
   toastUntil = 0,
   lastClock = '',
   helpPaused = false;
-let defaultDifficulty = config.difficulties[0];
+let defaultDifficulty = config.players.find((slot) => slot.kind === 'bot')?.botId ?? 'medium';
 const icons = {
   sound:
     '<svg viewBox="0 0 20 20"><path d="M8 5 4 8H2v4h2l4 3V5Zm4 2a5 5 0 0 1 0 6m3-9a9 9 0 0 1 0 12"/></svg>',
@@ -80,7 +81,7 @@ function scoreboard() {
   $('scoreboard').innerHTML = game.tanks
     .map(
       (t) =>
-        `<div class="score-card ${t.alive ? '' : 'eliminated'}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === 0 ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.id === 0 ? 'THE HUMAN' : escapeHTML(getBotType(t.difficulty)?.label ?? t.difficulty ?? 'Bot') + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
+        `<div class="score-card ${t.alive ? '' : 'eliminated'}" data-tank="${t.id}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === game.humanId ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.controller.kind === 'human' ? 'THE HUMAN' : escapeHTML(getBotType(t.controller.botId)?.label ?? t.controller.botId) + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
     )
     .join('');
 }
@@ -93,14 +94,16 @@ function settingsUI() {
       return button;
     }),
   );
-  $('opponent-count').textContent = String(config.opponents);
-  $('opponent-minus').disabled = config.opponents <= 1;
-  $('opponent-plus').disabled = config.opponents >= 5;
+  $('tank-count').textContent = String(config.players.length);
+  $('tank-minus').disabled = config.players.length <= 2;
+  $('tank-plus').disabled = config.players.length >= 6;
   $('map-size').value = config.size;
   $('maze-density').value = config.density;
   $('win-target').value = String(config.target);
   $('powerups').checked = config.powerups;
-  const mixed = new Set(config.difficulties).size > 1;
+  const botIds = config.players.flatMap((slot) => (slot.kind === 'bot' ? [slot.botId] : []));
+  const mixed = new Set(botIds).size > 1;
+  if (!mixed && botIds.length) defaultDifficulty = botIds[0];
   for (const button of $('difficulty').querySelectorAll('button')) {
     const selected = !mixed && button.dataset.value === defaultDifficulty;
     button.classList.toggle('selected', selected);
@@ -113,19 +116,20 @@ function settingsUI() {
     : [type.tagline, type.description];
   $('difficulty-status').textContent = label;
   $('difficulty-description').textContent = description;
-  $('bot-roster').innerHTML = config.difficulties
+  $('player-roster').innerHTML = config.players
     .map(
-      (d, i) =>
-        `<div class="bot-row"><span class="bot-swatch" style="background:${COLORS[i + 1]}"></span><span>${NAMES[i + 1]}</span><select data-bot="${i}" aria-label="${NAMES[i + 1]} difficulty">${getBotTypes()
+      (slot, i) =>
+        `<div class="player-row ${slot.kind === 'human' ? 'human-row' : ''}"><span class="player-swatch" style="background:${COLORS[i]}"></span><span>${NAMES[i]}${slot.kind === 'human' ? ' / You' : ''}</span><select data-player="${i}" aria-label="${NAMES[i]} controller"><option value="human" ${slot.kind === 'human' ? 'selected' : ''}>Human</option>${getBotTypes()
           .map(
             (type) =>
-              `<option value="${type.id}" ${type.id === d ? 'selected' : ''}>${escapeHTML(type.label)}</option>`,
+              `<option value="bot:${type.id}" ${slot.kind === 'bot' && type.id === slot.botId ? 'selected' : ''}>${escapeHTML(type.label)}</option>`,
           )
           .join('')}</select></div>`,
     )
     .join('');
-  $('start-caption').textContent =
-    `YOU + ${config.opponents} BOT${config.opponents > 1 ? 'S' : ''}. ONE TANK LEFT STANDING.`;
+  $('start-caption').textContent = config.players.some((slot) => slot.kind === 'human')
+    ? `YOU + ${botIds.length} BOT${botIds.length > 1 ? 'S' : ''}. ONE TANK LEFT STANDING.`
+    : `${botIds.length} BOTS. TAKE A SEAT. WATCH THE TROUBLE.`;
   persist();
 }
 function setupChanged() {
@@ -156,6 +160,20 @@ function showOverlay(html: string, countdown = false) {
 }
 function stateUI() {
   const state = game.state;
+  const spectating = game.humanId === null;
+  $('arena-shell').classList.toggle('spectating', spectating);
+  $('below-arena').classList.toggle('spectating', spectating);
+  $('help-dialog').classList.toggle('spectating', spectating);
+  $('help-intro').textContent = spectating
+    ? 'Watch the bots battle through the maze. The last tank standing wins the round. Choose Human in match setup whenever you want to join the next match.'
+    : 'Drive the tank marked YOU through the maze. Eliminate the other tanks and be the last one standing to score a round win.';
+  $('spectator-note').hidden = !spectating;
+  $('arena').setAttribute(
+    'aria-label',
+    spectating
+      ? 'Tank arena. Watching a bot-only match. Escape to pause.'
+      : 'Tank arena. Use arrow keys or W A S D to move and turn. Space to fire. Escape to pause.',
+  );
   const live = ['playing', 'countdown', 'roundOver', 'paused'].includes(state);
   $('pause-button').disabled = !live;
   $('pause-button').innerHTML = icons[state === 'paused' ? 'play' : 'pause'];
@@ -173,7 +191,9 @@ function stateUI() {
     ? 'Start new match'
     : state === 'matchOver'
       ? 'Play again'
-      : 'Let’s battle';
+      : spectating
+        ? 'Watch the battle'
+        : 'Let’s battle';
   $('round-label').textContent = game.round
     ? `ROUND ${String(game.round).padStart(2, '0')}`
     : 'FREE-FOR-ALL';
@@ -182,7 +202,7 @@ function stateUI() {
     : 'ENDLESS MATCH';
   if (state === 'ready')
     showOverlay(
-      `<div class="overlay-emblem">${tankIcon(COLORS[0])}</div><h2>Ready to roll?</h2><p>A fresh maze. A few bad bots.<br>One very good reason to keep moving.</p><button class="start-button" data-action="start">Enter the arena <span>↗</span></button><span class="overlay-footnote">LAST TANK STANDING WINS.</span>`,
+      `<div class="overlay-emblem">${tankIcon(COLORS[game.humanId ?? 0])}</div><h2>${spectating ? 'Let them loose.' : 'Ready to roll?'}</h2><p>${spectating ? 'All bots. All trouble.<br>Pick a favorite and watch the ricochets.' : 'A fresh maze. A few bad bots.<br>One very good reason to keep moving.'}</p><button class="start-button" data-action="start">${spectating ? 'Watch the battle' : 'Enter the arena'} <span>↗</span></button><span class="overlay-footnote">LAST TANK STANDING WINS.</span>`,
     );
   if (state === 'playing') $('overlay').classList.add('hidden');
   if (state === 'paused')
@@ -191,7 +211,7 @@ function stateUI() {
     );
   if (state === 'roundOver' || state === 'matchOver') {
     const winner = game.winner;
-    const you = winner?.id === 0;
+    const you = winner !== null && winner.id === game.humanId;
     const heading = !winner
       ? 'Mutual destruction.'
       : state === 'matchOver'
@@ -203,13 +223,17 @@ function stateUI() {
           : `${winner.name} wins the round.`;
     const copy = !winner
       ? 'No tank left standing. No points awarded.'
-      : state === 'matchOver'
-        ? you
-          ? 'A little aim. A little chaos. A well-earned crown.'
-          : 'The bots had their moment. Time for a rematch?'
-        : you
-          ? 'Nicely done. A new maze is coming right up.'
-          : 'Dust yourself off. A fresh maze, a fresh chance.';
+      : spectating
+        ? state === 'matchOver'
+          ? 'A champion emerges. Ready for another match?'
+          : 'A new maze. Another round of trouble.'
+        : state === 'matchOver'
+          ? you
+            ? 'A little aim. A little chaos. A well-earned crown.'
+            : 'The bots had their moment. Time for a rematch?'
+          : you
+            ? 'Nicely done. A new maze is coming right up.'
+            : 'Dust yourself off. A fresh maze, a fresh chance.';
     showOverlay(
       `<div class="overlay-emblem" style="color:${winner?.color || COLORS[0]}">${winner ? tankIcon(winner.color) : '×'}</div><h2>${heading}</h2><p>${copy}</p>${state === 'matchOver' ? '<button class="start-button" data-action="start">One more match <span>↗</span></button><button class="secondary-button" data-action="quit">Back to setup</button>' : '<span class="overlay-footnote">NEXT ROUND IN A MOMENT…</span>'}`,
     );
@@ -272,15 +296,14 @@ $('fullscreen-button').addEventListener('click', async () => {
     toast('Fullscreen is unavailable in this browser.');
   }
 });
-$('opponent-minus').addEventListener('click', () => {
-  config.opponents = Math.max(1, config.opponents - 1);
-  config.difficulties.length = config.opponents;
+$('tank-minus').addEventListener('click', () => {
+  if (config.players.length <= 2) return;
+  config.players.pop();
   setupChanged();
 });
-$('opponent-plus').addEventListener('click', () => {
-  if (config.opponents < 5) {
-    config.opponents++;
-    config.difficulties.push(defaultDifficulty);
+$('tank-plus').addEventListener('click', () => {
+  if (config.players.length < 6) {
+    config.players.push({ kind: 'bot', botId: defaultDifficulty });
     setupChanged();
   }
 });
@@ -288,14 +311,21 @@ $('difficulty').addEventListener('click', (e) => {
   const level = e.target instanceof HTMLElement ? e.target.dataset.value : undefined;
   if (!hasBot(level)) return;
   defaultDifficulty = level;
-  config.difficulties.fill(level);
+  config.players = config.players.map((slot) =>
+    slot.kind === 'bot' ? { kind: 'bot', botId: level } : slot,
+  );
   setupChanged();
 });
-$('bot-roster').addEventListener('change', (e) => {
+$('player-roster').addEventListener('change', (e) => {
   if (!(e.target instanceof HTMLSelectElement)) return;
-  if (!hasBot(e.target.value)) return;
-  config.difficulties[Number(e.target.dataset.bot)] = e.target.value;
-  defaultDifficulty = config.difficulties[0];
+  const value = e.target.value;
+  const botId = value.startsWith('bot:') ? value.slice(4) : undefined;
+  if (value !== 'human' && !hasBot(botId)) return;
+  config.players = assignController(
+    config.players,
+    Number(e.target.dataset.player),
+    value === 'human' ? { kind: 'human' } : { kind: 'bot', botId: botId! },
+  );
   setupChanged();
 });
 for (const [id, field] of [
@@ -370,7 +400,11 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (gameKeys.has(e.code) && ['playing', 'countdown'].includes(game.state)) {
+  if (
+    game.humanId !== null &&
+    gameKeys.has(e.code) &&
+    ['playing', 'countdown'].includes(game.state)
+  ) {
     e.preventDefault();
     keys.add(e.code);
   }
@@ -390,6 +424,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]'))
   const key = button.dataset.key;
   if (!key) continue;
   button.addEventListener('pointerdown', (e) => {
+    if (game.humanId === null || !['playing', 'countdown'].includes(game.state)) return;
     e.preventDefault();
     sound.unlock();
     button.setPointerCapture(e.pointerId);
@@ -413,7 +448,7 @@ const notes = [
 ];
 function handleEvents() {
   for (const event of game.drainEvents()) {
-    sound.play(event);
+    sound.play(event, game.humanId);
     if (event.type === 'state') stateUI();
     if (event.type === 'score') scoreboard();
     if (event.type === 'map') {
@@ -430,7 +465,7 @@ function handleEvents() {
       $('overlay').classList.add('hidden');
       toast('ROLL OUT.', 1100);
     }
-    if (event.type === 'pickup' && event.id === 0)
+    if (event.type === 'pickup' && event.id === game.humanId)
       toast(
         {
           shield: 'SHIELD UP · ONE HIT BLOCKED',
@@ -438,9 +473,11 @@ function handleEvents() {
           scatter: 'TRIPLE SHOT · 7 SECONDS',
         }[event.power],
       );
-    if (event.type === 'destroy' && event.id === 0)
+    if (event.type === 'destroy' && event.id === game.humanId)
       toast(
-        event.owner === 0 ? 'YOUR OWN RICOCHET. IT HAPPENS.' : 'YOU’RE OUT. REVENGE NEXT ROUND.',
+        event.owner === game.humanId
+          ? 'YOUR OWN RICOCHET. IT HAPPENS.'
+          : 'YOU’RE OUT. REVENGE NEXT ROUND.',
         2500,
       );
   }

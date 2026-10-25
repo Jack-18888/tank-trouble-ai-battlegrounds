@@ -46,11 +46,12 @@ Run `npm run check` before committing changes. Build output, dependencies, brows
 | Fire                    | Space          |
 | Pause / resume          | Escape or P    |
 
-Touchscreens get a direction pad and a fire button. The arena also supports fullscreen. Switching away from the game automatically pauses it.
+Touchscreens get a direction pad and a fire button when a human is playing. Controls follow the tank assigned Human, regardless of its roster position. Bot-only matches hide driving controls and let you spectate; pause, help, sound, and fullscreen remain available. Switching away from the game automatically pauses it.
 
 ## Match options
 
-- One human against 1–5 bots, with individual difficulty settings.
+- 2–6 tanks, each assigned Human or a registered bot difficulty. At most one human; choose all bots to watch them battle.
+- Choosing Human on another tank swaps its controller with the previous human. Removing the human slot leaves a bot-only match. Setup changes during a match apply to the next match.
 - Easy: slow reactions, reduced speed, and less accurate shots.
 - Medium: maze navigation, enemy tracking, and some bullet avoidance.
 - Hard: faster reactions, predictive aim, incoming shell avoidance, and single-bounce bank shots. Bots use the same movement and shell physics as the player.
@@ -69,8 +70,9 @@ Match play runs locally, and preferences use browser local storage. There are no
 ## Source layout
 
 - `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
-- `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, bot observations and control application, swept projectile collisions, power-ups, and match state.
-- `src/bots/`: abstract bot contract, Easy/Medium/Hard implementations, shared combat strategy, and the registry used by the game and setup UI.
+- `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, shared player control application, swept projectile collisions, power-ups, and match state.
+- `src/players/`: shared abstract player contract, keyboard/touch player, movement and firing profiles, decision types, and roster controller swaps.
+- `src/bots/`: Easy/Medium/Hard subclasses, shared combat strategy, and the registry used by the game and setup UI.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
 - `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.
 - `src/main.ts`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
@@ -79,8 +81,11 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `tests/engine.test.ts`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
 - `tests/collision-regressions.test.ts`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
 - `tests/bots.test.ts`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
+- `tests/players.test.ts`: human input in any slot, controller swapping, roster validation, preference migration, reaction timing, and bot-only round progression.
 
-To add a strategy, extend `Bot`, implement `decide(context)`, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
+To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each tank has an independent controller, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
+
+Programmatic matches use `new Game({ players: [{ kind: 'human' }, { kind: 'bot', botId: 'hard' }] })`. Use only bot slots for spectator matches. Old saved opponent/difficulty preferences migrate to this roster format automatically.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 
@@ -92,6 +97,6 @@ With the development server running and Chrome or Chromium installed:
 npm run test:browser
 ```
 
-Set `CHROME_PATH` if needed. This uses Chromium’s debugging protocol without a browser automation dependency. It checks settings, mixed difficulties, input, pause, help, touch controls, persistence, console errors, and layouts from 390 to 1440 pixels wide. Screenshots and an isolated temporary browser profile go in the ignored `.qa/` directory.
+Set `CHROME_PATH` if needed. This uses Chromium’s debugging protocol without a browser automation dependency. It checks roster limits, human controller swaps, bot-only spectator matches, settings taking effect next match, mixed difficulties, input, pause, help, touch controls, preference migration and persistence, console errors, and layouts from 390 to 1440 pixels wide. Screenshots and an isolated temporary browser profile go in the ignored `.qa/` directory.
 
 To check the compiled production bundle, start `npm run preview` after building, then run `npm run test:browser -- --preview`. This mode exercises the rendered game without importing development-only source modules.

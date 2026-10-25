@@ -62,9 +62,9 @@ export type Seed = string | number;
 export type PowerupType = 'shield' | 'rapid' | 'scatter';
 export type OffensivePower = Exclude<PowerupType, 'shield'>;
 export type GameState = 'ready' | 'countdown' | 'playing' | 'paused' | 'roundOver' | 'matchOver';
+export type PlayerSlot = { kind: 'human' } | { kind: 'bot'; botId: string };
 export interface GameConfig {
-  opponents: number;
-  difficulties: string[];
+  players: PlayerSlot[];
   size: MapSize;
   density: MazeDensity;
   target: WinTarget;
@@ -82,7 +82,7 @@ export interface Tank extends TankPose {
   name: string;
   color: string;
   alive: boolean;
-  difficulty: string | null;
+  controller: PlayerSlot;
   cooldown: number;
   shield: boolean;
   power: OffensivePower | null;

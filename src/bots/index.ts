@@ -3,8 +3,7 @@ import { MediumBot } from './medium-bot.ts';
 import { HardBot } from './hard-bot.ts';
 import { registerBot } from './registry.ts';
 
-export { Bot } from './bot.ts';
-export type { BotContext, BotDecision, BotProfile, BotMetadata, BotConstructor } from './types.ts';
+export type { BotContext, BotMetadata, BotConstructor } from './types.ts';
 export { EasyBot, MediumBot, HardBot };
 export { registerBot, createBot, getBotType, getBotTypes, hasBot } from './registry.ts';
 

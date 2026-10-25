@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Game, CELL, SHELL_SPEED } from '../src/engine.ts';
 import {
-  Bot,
   EasyBot,
   MediumBot,
   HardBot,
@@ -12,17 +11,19 @@ import {
   hasBot,
   getBotType,
 } from '../src/bots/index.ts';
-import type { BotContext, BotDecision } from '../src/bots/index.ts';
+import type { BotContext } from '../src/bots/index.ts';
+import { AbstractPlayer } from '../src/players/index.ts';
+import type { PlayerContext, PlayerDecision } from '../src/players/index.ts';
 
-test('Bot is abstract and registered subclasses must implement decide', () => {
+test('AbstractPlayer is abstract and registered subclasses must implement decide', () => {
   // @ts-expect-error Abstract construction is intentionally tested at runtime.
-  assert.throws(() => new Bot(), /abstract/);
+  assert.throws(() => new AbstractPlayer(), /abstract/);
   // @ts-expect-error Missing abstract method is intentionally tested at runtime.
-  class MissingDecision extends Bot {}
+  class MissingDecision extends AbstractPlayer {}
   assert.throws(() => new MissingDecision(), /implement decide/);
   assert.throws(() => registerBot('missing-decision', MissingDecision), /implement decide/);
   // @ts-expect-error Non-controller classes are intentionally rejected.
-  assert.throws(() => registerBot('not-a-bot', class {}), /extend Bot/);
+  assert.throws(() => registerBot('not-a-bot', class {}), /extend AbstractPlayer/);
   assert.throws(() => registerBot('Bad ID', EasyBot), /Bot IDs/);
   assert.throws(() => registerBot('easy', EasyBot), /already registered/);
   assert.throws(() => createBot('unknown'), /Unknown bot/);
@@ -35,8 +36,9 @@ test('built-in difficulties have distinct classes and retain their movement prof
     ['hard', HardBot, 108],
   ] as const) {
     const bot = createBot(id);
-    assert.ok(bot instanceof Bot);
+    assert.ok(bot instanceof AbstractPlayer);
     assert.ok(bot instanceof Class);
+    assert.equal(Object.getPrototypeOf(Class.prototype), AbstractPlayer.prototype);
     assert.ok(Object.hasOwn(Class.prototype, 'decide'));
     assert.equal(bot.profile.speed, speed);
     assert.ok(Object.isFrozen(bot.profile));
@@ -94,7 +96,12 @@ test('bot observations include detached, deeply read-only world and match data',
 });
 
 test('query helpers and their observations keep a consistent snapshot after the game changes', () => {
-  const game = new Game({ opponents: 1 }, 'queries');
+  const game = new Game(
+    {
+      players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
+    },
+    'queries',
+  );
   game.map.walls = game.map.walls.filter((w) => w.border);
   Object.assign(game.tanks[1], { x: 100, y: 100, angle: 0 });
   Object.assign(game.tanks[0], { x: 350, y: 100, angle: 0 });
@@ -115,16 +122,17 @@ test('query helpers and their observations keep a consistent snapshot after the 
 });
 
 test('a newly registered class controls the game and keeps independent per-tank state', () => {
-  class ForwardBot extends Bot {
+  class ForwardBot extends AbstractPlayer {
     decisions = 0;
     lastContext: BotContext | null = null;
     constructor() {
       super({ reaction: 0.05, error: 0 });
       this.decisions = 0;
     }
-    override decide(context: BotContext): BotDecision {
+    override decide({ observe }: PlayerContext): PlayerDecision {
       this.decisions++;
-      this.lastContext = context;
+      this.lastContext = observe();
+      assert.equal(observe(), this.lastContext, 'one snapshot is shared within a decision');
       return { steer: 0, throttle: 1, fire: true };
     }
   }
@@ -132,12 +140,22 @@ test('a newly registered class controls the game and keeps independent per-tank 
   assert.equal(hasBot('test-forward'), true);
   assert.ok(getBotTypes().some((t) => t.id === 'test-forward' && t.label === 'Forward'));
   const game = new Game(
-    { opponents: 2, difficulties: ['test-forward', 'test-forward'] },
+    {
+      players: [
+        { kind: 'human' },
+        { kind: 'bot', botId: 'test-forward' },
+        { kind: 'bot', botId: 'test-forward' },
+      ],
+    },
     'extension',
   );
-  assert.deepEqual(game.config.difficulties, ['test-forward', 'test-forward']);
-  const first = game.bots.get(1),
-    second = game.bots.get(2);
+  assert.deepEqual(game.config.players, [
+    { kind: 'human' },
+    { kind: 'bot', botId: 'test-forward' },
+    { kind: 'bot', botId: 'test-forward' },
+  ]);
+  const first = game.players.get(1),
+    second = game.players.get(2);
   assert.ok(first instanceof ForwardBot);
   assert.ok(second instanceof ForwardBot);
   assert.notEqual(first, second);
@@ -153,14 +171,14 @@ test('a newly registered class controls the game and keeps independent per-tank 
   assert.equal(first.lastContext?.self.id, 1);
   assert.equal(second.lastContext?.self.id, 2);
   game.prepareRound('new-round');
-  assert.notEqual(game.bots.get(1), first);
-  const next = game.bots.get(1);
+  assert.notEqual(game.players.get(1), first);
+  const next = game.players.get(1);
   assert.ok(next instanceof ForwardBot);
   assert.equal(next.decisions, 0);
 });
 
 test('invalid controls are bounded and unknown saved types fall back to medium', () => {
-  class BadControlsBot extends Bot {
+  class BadControlsBot extends AbstractPlayer {
     // @ts-expect-error Invalid firing controls are intentionally tested at runtime.
     override decide() {
       return { steer: 99, throttle: NaN, fire: 'yes' };
@@ -168,24 +186,30 @@ test('invalid controls are bounded and unknown saved types fall back to medium',
   }
   // @ts-expect-error This malformed implementation exercises control sanitization.
   registerBot('test-controls', BadControlsBot);
-  const game = new Game({ opponents: 1, difficulties: ['test-controls'] }, 'controls');
+  const game = new Game(
+    {
+      players: [{ kind: 'human' }, { kind: 'bot', botId: 'test-controls' }],
+    },
+    'controls',
+  );
   game.think(game.tanks[1]);
   assert.equal(game.tanks[1].steer, 1);
   assert.equal(game.tanks[1].throttle, 0);
   assert.equal(game.tanks[1].fire, false);
-  assert.deepEqual(new Game({ difficulties: ['removed-custom-type'] }).config.difficulties, [
-    'medium',
-    'medium',
-  ]);
+  assert.deepEqual(
+    new Game({ players: [{ kind: 'human' }, { kind: 'bot', botId: 'removed-custom-type' }] }).config
+      .players,
+    [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
+  );
   assert.equal(getBotType('easy')?.label, 'Easy');
 });
 
 test('invalid custom movement profiles fail before entering the simulation', () => {
-  class InvalidProfile extends Bot {
+  class InvalidProfile extends AbstractPlayer {
     constructor() {
-      super({ reaction: 0 });
+      super({ reaction: -1 });
     }
-    override decide(): BotDecision {
+    override decide(): PlayerDecision {
       return {};
     }
   }
@@ -193,7 +217,7 @@ test('invalid custom movement profiles fail before entering the simulation', () 
 });
 
 test('asynchronous bot decisions fail with an explicit contract error', () => {
-  class AsyncBot extends Bot {
+  class AsyncBot extends AbstractPlayer {
     // @ts-expect-error Promise-returning decisions are intentionally rejected.
     override async decide() {
       return {};
@@ -201,17 +225,33 @@ test('asynchronous bot decisions fail with an explicit contract error', () => {
   }
   // @ts-expect-error This controller tests the runtime JavaScript boundary.
   registerBot('test-async', AsyncBot);
-  const game = new Game({ opponents: 1, difficulties: ['test-async'] });
+  const game = new Game({
+    players: [{ kind: 'human' }, { kind: 'bot', botId: 'test-async' }],
+  });
   assert.throws(() => game.think(game.tanks[1]), /synchronous movement decision/);
 });
 
 test('built-in controller decisions remain deterministic for a seeded game', () => {
   const a = new Game(
-    { opponents: 3, difficulties: ['easy', 'medium', 'hard'] },
+    {
+      players: [
+        { kind: 'human' },
+        { kind: 'bot', botId: 'easy' },
+        { kind: 'bot', botId: 'medium' },
+        { kind: 'bot', botId: 'hard' },
+      ],
+    },
     'deterministic-bots',
   );
   const b = new Game(
-    { opponents: 3, difficulties: ['easy', 'medium', 'hard'] },
+    {
+      players: [
+        { kind: 'human' },
+        { kind: 'bot', botId: 'easy' },
+        { kind: 'bot', botId: 'medium' },
+        { kind: 'bot', botId: 'hard' },
+      ],
+    },
     'deterministic-bots',
   );
   a.start();
@@ -230,7 +270,11 @@ test('built-in controller decisions remain deterministic for a seeded game', () 
 test('Hard follows maze routes to an idle player instead of circling its spawn cell', () => {
   for (let seed = 0; seed < 10; seed++) {
     const game = new Game(
-      { opponents: 1, difficulties: ['hard'], target: 0, powerups: false },
+      {
+        players: [{ kind: 'human' }, { kind: 'bot', botId: 'hard' }],
+        target: 0,
+        powerups: false,
+      },
       'chase-' + seed,
     );
     game.state = 'playing';
@@ -261,7 +305,11 @@ test('Hard follows maze routes to an idle player instead of circling its spawn c
 test('Hard pursues and attacks an idle player with normal firing enabled', () => {
   for (let seed = 0; seed < 10; seed++) {
     const game = new Game(
-      { opponents: 1, difficulties: ['hard'], target: 0, powerups: false },
+      {
+        players: [{ kind: 'human' }, { kind: 'bot', botId: 'hard' }],
+        target: 0,
+        powerups: false,
+      },
       'chase-' + seed,
     );
     game.state = 'playing';

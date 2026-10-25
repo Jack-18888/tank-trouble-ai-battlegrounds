@@ -12,7 +12,13 @@ import {
 
 const wall = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
 function arena() {
-  const game = new Game({ opponents: 1, powerups: false }, 'collision-regression');
+  const game = new Game(
+    {
+      players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
+      powerups: false,
+    },
+    'collision-regression',
+  );
   game.map.walls = game.map.walls.filter((w) => w.border);
   game.state = 'playing';
   Object.assign(game.tanks[0], { x: 100, y: 100, angle: 0, cooldown: 0 });

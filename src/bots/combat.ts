@@ -1,18 +1,19 @@
 import { angleDiff, clamp, distance } from '../math.ts';
-import type { BotContext, BotDecision, BotProfile } from './types.ts';
+import type { BotContext } from './types.ts';
+import type { PlayerDecision, PlayerProfile } from '../players/types.ts';
 import { MazeNavigator } from './navigation.ts';
 
-// Each controller owns its strategy and route memory; custom Bot subclasses
+// Each controller owns its strategy and route memory; custom AbstractPlayer subclasses
 // can compose this strategy or provide their own decision implementation.
 export class CombatStrategy {
   private readonly navigator = new MazeNavigator();
 
   constructor(
-    private readonly profile: Readonly<BotProfile>,
+    private readonly profile: Readonly<PlayerProfile>,
     private readonly options: { dodge?: boolean; bank?: boolean } = {},
   ) {}
 
-  decide(context: BotContext): BotDecision {
+  decide(context: BotContext): PlayerDecision {
     const { self: tank, rules } = context;
     const { profile } = this;
     const { dodge = false, bank = false } = this.options;

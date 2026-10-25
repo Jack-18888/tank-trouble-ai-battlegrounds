@@ -135,6 +135,17 @@ try {
     return r.result.value as T;
   };
   const click = (id: string) => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  const closeHelp = () =>
+    evaluate(`new Promise(resolve => {
+    document.getElementById('help-dialog').addEventListener('close', resolve, {once:true});
+    document.getElementById('got-it').click();
+  })`);
+  const selectController = (index: number, value: string) =>
+    evaluate(`(() => {
+    const select = document.querySelector('[data-player="${index}"]');
+    select.value = ${JSON.stringify(value)};
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
   const screenshot = async (name: string) => {
     const r = await cdp<{ data: string }>('Page.captureScreenshot', { format: 'png' });
     await writeFile(`.qa/${preview ? 'preview-' : ''}${name}.png`, Buffer.from(r.data, 'base64'));
@@ -166,6 +177,26 @@ try {
   await evaluate('document.fonts.ready');
   await delay(400);
   await evaluate('localStorage.clear()');
+  await evaluate(`localStorage.setItem('tank-trouble.preferences.v1', JSON.stringify({
+    config: {opponents:2,difficulties:['hard','easy'],size:'large',density:'dense',target:10,powerups:false}, sound:false
+  }))`);
+  await cdp('Page.reload');
+  await delay(500);
+  assert.deepEqual(
+    await evaluate(
+      `JSON.parse(localStorage.getItem('tank-trouble.preferences.v1')).config.players`,
+    ),
+    [{ kind: 'human' }, { kind: 'bot', botId: 'hard' }, { kind: 'bot', botId: 'easy' }],
+  );
+  assert.equal(await evaluate(`document.getElementById('map-size').value`), 'large');
+  assert.equal(await evaluate(`document.getElementById('maze-density').value`), 'dense');
+  assert.equal(await evaluate(`document.getElementById('win-target').value`), '10');
+  assert.equal(await evaluate(`document.getElementById('powerups').checked`), false);
+  assert.equal(
+    await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`),
+    'false',
+  );
+  await evaluate('localStorage.clear()');
   await cdp('Page.reload');
   await delay(500);
   assert.equal(await evaluate(`document.querySelectorAll('.score-card').length`), 3);
@@ -181,24 +212,40 @@ try {
   const firstSeed = await evaluate(`document.getElementById('map-seed').textContent`);
   await click('shuffle-button');
   assert.notEqual(await evaluate(`document.getElementById('map-seed').textContent`), firstSeed);
-  await click('opponent-plus');
-  await click('opponent-plus');
-  await click('opponent-plus');
-  assert.equal(await evaluate(`document.getElementById('opponent-count').textContent`), '5');
+  await click('tank-plus');
+  await click('tank-plus');
+  await click('tank-plus');
+  assert.equal(await evaluate(`document.getElementById('tank-count').textContent`), '6');
+  assert.equal(await evaluate(`document.getElementById('tank-plus').disabled`), true);
   assert.equal(await evaluate(`document.querySelectorAll('.score-card').length`), 6);
   await evaluate(`document.querySelector('#difficulty [data-value="hard"]').click()`);
   assert.equal(
     await evaluate(
-      `Array.from(document.querySelectorAll('[data-bot]')).every(s=>s.value==='hard')`,
+      `Array.from(document.querySelectorAll('[data-player]')).every(s=>s.value==='human'||s.value==='bot:hard')`,
     ),
     true,
   );
-  await evaluate(
-    `var botSelect=document.querySelector('[data-bot="1"]'); botSelect.value='easy'; botSelect.dispatchEvent(new Event('change',{bubbles:true}))`,
-  );
+  await selectController(1, 'bot:easy');
   assert.equal(
     await evaluate(`document.getElementById('difficulty-status').textContent`),
     'MIXED COMPANY',
+  );
+  await selectController(2, 'human');
+  assert.equal(await evaluate(`document.querySelector('[data-player="0"]').value`), 'bot:hard');
+  assert.equal(await evaluate(`document.querySelector('[data-player="2"]').value`), 'human');
+  assert.equal(
+    await evaluate(
+      `document.querySelectorAll('[data-player] option:checked[value="human"]').length`,
+    ),
+    1,
+  );
+  assert.equal(
+    await evaluate(`document.querySelector('[data-tank="2"] .score-sub').textContent`),
+    'THE HUMAN',
+  );
+  assert.equal(
+    await evaluate(`document.querySelector('[data-tank="0"] .score-name').textContent`),
+    'Moss',
   );
   const previewSeed = await evaluate(`document.getElementById('map-seed').textContent`);
   await click('start-button');
@@ -221,7 +268,7 @@ try {
   await screenshot('desktop-paused');
   await click('help-button');
   assert.equal(await evaluate(`document.getElementById('help-dialog').open`), true);
-  await click('got-it');
+  await closeHelp();
   await evaluate(`document.querySelector('[data-action="quit"]').click()`);
   for (const [width, height] of [
     [390, 844],
@@ -245,6 +292,29 @@ try {
     'flex',
   );
   await screenshot('mobile-touch');
+  await click('start-button');
+  const fireButton = await evaluate<{ x: number; y: number }>(`(() => {
+    const button = document.querySelector('[data-key="Space"]');
+    button.scrollIntoView({block:'center'});
+    const rect = button.getBoundingClientRect();
+    return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};
+  })()`);
+  await cdp('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ ...fireButton, id: 0 }],
+  });
+  assert.equal(
+    await evaluate(`document.querySelector('[data-key="Space"]').classList.contains('active')`),
+    true,
+  );
+  await cdp('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  assert.equal(
+    await evaluate(`document.querySelector('[data-key="Space"]').classList.contains('active')`),
+    false,
+  );
+  await click('pause-button');
+  await evaluate(`document.querySelector('[data-action="quit"]').click()`);
+  await evaluate('window.scrollTo(0,0)');
   await size(1440, 900, false);
   await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
   await delay(200);
@@ -255,19 +325,121 @@ try {
   );
   await cdp('Page.reload');
   await delay(600);
-  assert.equal(await evaluate(`document.getElementById('opponent-count').textContent`), '5');
+  assert.equal(await evaluate(`document.getElementById('tank-count').textContent`), '6');
+  assert.equal(await evaluate(`document.querySelector('[data-player="2"]').value`), 'human');
   assert.equal(
     await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`),
     muted,
   );
+
+  // Settings selected during a match must not change its active controllers.
+  await click('start-button');
+  await delay(2900);
+  await selectController(2, 'bot:medium');
+  assert.equal(
+    await evaluate(`document.getElementById('start-caption').textContent`),
+    'NEW SETTINGS APPLY TO YOUR NEXT MATCH.',
+  );
+  assert.equal(
+    await evaluate(`document.querySelector('[data-tank="2"] .score-sub').textContent`),
+    'THE HUMAN',
+  );
+  assert.equal(
+    await evaluate(`document.getElementById('arena-shell').classList.contains('spectating')`),
+    false,
+  );
+  await click('pause-button');
+  await evaluate(`document.querySelector('[data-action="quit"]').click()`);
+  assert.equal(
+    await evaluate(`document.getElementById('arena-shell').classList.contains('spectating')`),
+    true,
+  );
+  assert.equal(await evaluate(`document.querySelectorAll('.score-sub').length`), 6);
+  assert.equal(
+    await evaluate(
+      `Array.from(document.querySelectorAll('.score-sub')).some(s=>s.textContent==='THE HUMAN')`,
+    ),
+    false,
+  );
+  assert.equal(
+    await evaluate(`getComputedStyle(document.querySelector('.keyboard-legend')).display`),
+    'none',
+  );
+  assert.equal(await evaluate(`document.getElementById('spectator-note').hidden`), false);
+  assert.equal(
+    await evaluate(`document.getElementById('start-label').textContent`),
+    'Watch the battle',
+  );
+  await size(390, 844, true);
+  await cdp('Emulation.setTouchEmulationEnabled', { enabled: true });
+  await delay(200);
+  assert.equal(
+    await evaluate(`getComputedStyle(document.getElementById('touch-controls')).display`),
+    'none',
+  );
+  assert.equal(
+    await evaluate(`getComputedStyle(document.getElementById('below-arena'),'::before').display`),
+    'none',
+  );
+  assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+  await screenshot('mobile-spectator');
+  await size(1440, 1100);
+  await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await click('start-button');
+  await delay(2900);
+  for (const code of ['ArrowUp', 'Space']) {
+    assert.equal(
+      await evaluate(`(() => {
+      const event = new KeyboardEvent('keydown', { code: ${JSON.stringify(code)}, bubbles: true, cancelable: true });
+      document.getElementById('arena').dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`),
+      false,
+      'spectators must not capture driving keys',
+    );
+  }
+  await screenshot('desktop-spectator-playing');
+  await click('help-button');
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
+  assert.equal(
+    await evaluate(`getComputedStyle(document.querySelector('.help-controls')).display`),
+    'none',
+  );
+  await closeHelp();
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'LIVE MATCH');
+  await key('Escape', 'Escape');
+  await key('Escape', 'Escape', 'keyUp');
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
+  await evaluate(`document.querySelector('[data-action="quit"]').click()`);
+  await cdp('Page.reload');
+  await delay(500);
+  assert.equal(
+    await evaluate(`document.getElementById('arena-shell').classList.contains('spectating')`),
+    true,
+  );
+  for (let i = 0; i < 4; i++) await click('tank-minus');
+  assert.equal(await evaluate(`document.getElementById('tank-count').textContent`), '2');
+  assert.equal(await evaluate(`document.getElementById('tank-minus').disabled`), true);
+  await click('tank-plus');
+  await selectController(2, 'human');
+  await click('tank-minus');
+  assert.equal(
+    await evaluate(`document.getElementById('arena-shell').classList.contains('spectating')`),
+    true,
+    'removing the human slot leaves a bot-only match',
+  );
+  await selectController(1, 'human');
+  await evaluate(`document.querySelector('#difficulty [data-value="medium"]').click()`);
   if (!preview) {
     // A registered implementation should be usable through setup without a
     // special-case engine branch or a hand-maintained list of UI choices.
     await evaluate(`(async () => {
-    const {Bot,registerBot} = await import('/src/bots/index.ts');
+    const {registerBot} = await import('/src/bots/index.ts');
+    const {AbstractPlayer} = await import('/src/players/index.ts');
     window.__customBotCalls=0;
-    class BrowserTestBot extends Bot {
-      decide(context) {
+    class BrowserTestBot extends AbstractPlayer {
+      decide({observe}) {
+        const context=observe();
         if (!context.map.cells.length || !Object.isFrozen(context.self)) throw Error('Incomplete bot context');
         window.__customBotCalls++;
         return {throttle:0.5,steer:0.2};
@@ -275,11 +447,11 @@ try {
     }
     registerBot('browser-custom',BrowserTestBot,{label:'Custom',tagline:'CUSTOM STRATEGY'});
   })()`);
-    await click('opponent-minus');
+    await click('tank-plus');
     assert.equal(await evaluate(`document.querySelectorAll('#difficulty button').length`), 4);
     assert.equal(
       await evaluate(
-        `Array.from(document.querySelectorAll('[data-bot]')).every(s=>Array.from(s.options).some(o=>o.value==='browser-custom'))`,
+        `Array.from(document.querySelectorAll('[data-player]')).every(s=>Array.from(s.options).some(o=>o.value==='bot:browser-custom'))`,
       ),
       true,
     );
@@ -307,7 +479,7 @@ try {
     // This fixture exists only in the isolated QA browser, not in the game UI.
     const corner = await evaluate<CornerResult>(`(async () => {
     const [{Game}, {Renderer}, geometry] = await Promise.all([import('/src/engine.ts'), import('/src/renderer.ts'), import('/src/geometry.ts')]);
-    const g = new Game({opponents:1,powerups:false}, 'browser-corner');
+    const g = new Game({players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],powerups:false}, 'browser-corner');
     const edge = {x1:32,y1:96,x2:128,y2:96};
     g.map = {...g.map, cols:4, rows:3, width:256, height:192, walls:[edge], cells:g.map.cells.filter(c=>c.x<4&&c.y<3)};
     const tank = g.tanks[0]; Object.assign(tank, {x:168,y:102,angle:-3*Math.PI/4,cooldown:0});
@@ -405,9 +577,12 @@ try {
         checks: [
           'startup',
           'maze shuffle',
-          '1–5 opponents',
+          '2–6 tanks and at most one human',
           'difficulty presets',
-          'individual bot difficulty',
+          'individual controllers and human slot swaps',
+          'bot-only matches and spectator controls',
+          'settings apply to the next match',
+          'legacy preference migration',
           'countdown',
           'keyboard movement and fire',
           'pause',

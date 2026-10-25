@@ -45,9 +45,9 @@ export class Sound {
     osc.start(start);
     osc.stop(start + duration);
   }
-  play(event: GameEvent) {
+  play(event: GameEvent, humanId: number | null) {
     const type = event.type;
-    if (type === 'fire') this.tone(170, 0.075, event.id === 0 ? 0.045 : 0.018, 'square', 60);
+    if (type === 'fire') this.tone(170, 0.075, event.id === humanId ? 0.045 : 0.018, 'square', 60);
     if (type === 'bounce' && performance.now() - this.lastBounce > 70) {
       this.lastBounce = performance.now();
       this.tone(740, 0.035, 0.013, 'sine', 380);

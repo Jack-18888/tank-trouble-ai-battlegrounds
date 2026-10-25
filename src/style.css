@@ -705,7 +705,7 @@ kbd {
   letter-spacing: 0.4px;
 }
 
-.opponent-stepper {
+.tank-stepper {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -715,7 +715,7 @@ kbd {
   padding: 9px 10px;
 }
 
-.opponent-stepper button {
+.tank-stepper button {
   width: 28px;
   height: 28px;
   border: 1px solid #dbe0d0;
@@ -725,21 +725,21 @@ kbd {
   background: #f0f2e7;
 }
 
-.opponent-stepper button:hover {
+.tank-stepper button:hover {
   background: #dfe7d0;
 }
 
-.opponent-stepper > div {
+.tank-stepper > div {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.opponent-stepper strong {
+.tank-stepper strong {
   font: 700 30px/1 var(--display);
 }
 
-.opponent-stepper span {
+.tank-stepper span {
   font: 7px/1.4 var(--mono);
   letter-spacing: 0.6px;
   color: #7c856c;
@@ -793,25 +793,25 @@ kbd {
   margin: 8px 0 13px;
 }
 
-.bot-roster {
+.player-roster {
   display: grid;
   gap: 7px;
 }
 
-.bot-row {
+.player-row {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 10px;
 }
 
-.bot-swatch {
+.player-swatch {
   width: 7px;
   height: 7px;
   border-radius: 2px;
 }
 
-.bot-row select {
+.player-row select {
   font-size: 8px;
   margin-left: auto;
   color: #7b836d;
@@ -1292,7 +1292,7 @@ dialog::backdrop {
   color: #7a846d;
 }
 
-.bot-row select {
+.player-row select {
   font-size: 9px;
 }
 
@@ -1659,20 +1659,20 @@ dialog::backdrop {
     font-size: 5px;
     padding: 3px;
   }
-  .opponent-stepper {
+  .tank-stepper {
     padding: 8px;
   }
-  .opponent-stepper > div {
+  .tank-stepper > div {
     gap: 7px;
   }
-  .opponent-stepper strong {
+  .tank-stepper strong {
     font-size: 25px;
   }
-  .opponent-stepper span {
+  .tank-stepper span {
     font-size: 6px;
     width: 47px;
   }
-  .opponent-stepper button {
+  .tank-stepper button {
     width: 23px;
     height: 26px;
   }
@@ -1696,10 +1696,10 @@ dialog::backdrop {
     grid-column: 1/-1;
     font-size: 7px;
   }
-  .bot-row {
+  .player-row {
     font-size: 9px;
   }
-  .bot-row select {
+  .player-row select {
     font-size: 8px;
     padding-right: 0;
     max-width: 70px;
@@ -1829,10 +1829,10 @@ dialog::backdrop {
   .setting-hint {
     font-size: 6px;
   }
-  .bot-row {
+  .player-row {
     font-size: 11px;
   }
-  .bot-row select {
+  .player-row select {
     font-size: 10px;
   }
   .scoreboard {
@@ -1867,4 +1867,39 @@ dialog::backdrop {
   .keyboard-legend {
     font-size: 9px;
   }
+}
+
+/* Controller setup and the bot-only spectator strip share the arcade palette. */
+.roster-hint {
+  color: #7c856c;
+  font-size: 9px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.human-row {
+  color: var(--green);
+  font-weight: 600;
+}
+.spectator-note {
+  color: var(--green);
+  font: 9px/1.6 var(--mono);
+  letter-spacing: 0.5px;
+}
+.spectator-note kbd {
+  margin-left: 12px;
+}
+.spectator-note:not([hidden]) {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.arena-shell.spectating .touch-controls,
+.below-arena.spectating::before,
+.below-arena.spectating .keyboard-legend,
+.below-arena.spectating .friendly-warning,
+#help-dialog.spectating .help-controls {
+  display: none;
 }

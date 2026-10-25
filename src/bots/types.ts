@@ -12,22 +12,7 @@ import type {
   Tank,
   WinTarget,
 } from '../types.ts';
-import type { Bot } from './bot.ts';
-
-export interface BotDecision {
-  /** -1 turns left, +1 turns right. Omitted controls are neutral. */
-  steer?: number;
-  /** -1 reverses, +1 drives forward. */
-  throttle?: number;
-  fire?: boolean;
-}
-export interface BotProfile {
-  speed: number;
-  turn: number;
-  reaction: number;
-  error: number;
-  cooldown: number;
-}
+import type { AbstractPlayer } from '../players/abstract-player.ts';
 export interface BotObservation {
   self: Tank;
   tanks: Tank[];
@@ -70,6 +55,6 @@ export interface BotMetadata {
   readonly description: string;
 }
 export interface BotConstructor {
-  new (): Bot;
-  readonly prototype: Bot;
+  new (): AbstractPlayer;
+  readonly prototype: AbstractPlayer;
 }

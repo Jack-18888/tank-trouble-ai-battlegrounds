@@ -14,7 +14,8 @@ import {
 import { clamp, distance } from './math.ts';
 import { createBot, hasBot } from './bots/index.ts';
 import { createBotContext } from './bots/context.ts';
-import type { Bot } from './bots/bot.ts';
+import { Player, HUMAN_PROFILE } from './players/player.ts';
+import type { AbstractPlayer } from './players/abstract-player.ts';
 import type { BotContext } from './bots/types.ts';
 import type {
   Bullet,
@@ -27,6 +28,7 @@ import type {
   MazeDensity,
   Particle,
   PlayerInput,
+  PlayerSlot,
   Point,
   Powerup,
   ReadonlyGameMap,
@@ -42,14 +44,13 @@ import type {
 
 export { clamp, angleDiff, distance } from './math.ts';
 export const CELL = 64;
-export const PLAYER_SPEED = 114;
+export const PLAYER_SPEED = HUMAN_PROFILE.speed;
 export const SHELL_SPEED = 140;
 export const SHELL_LIFETIME = 7.5;
 export const COLORS = ['#376b48', '#d17a4d', '#b39b40', '#5e889e', '#9680ad', '#bd6877'];
-export const NAMES = ['You', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
+export const NAMES = ['Moss', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
 export const DEFAULT_CONFIG: GameConfig = {
-  opponents: 2,
-  difficulties: ['medium', 'medium'],
+  players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }, { kind: 'bot', botId: 'medium' }],
   size: 'classic',
   density: 'balanced',
   target: 5,
@@ -57,19 +58,45 @@ export const DEFAULT_CONFIG: GameConfig = {
 };
 
 export function validateGameConfig(value: unknown): GameConfig {
+  const source: Record<string, unknown> =
+    typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {};
   const raw: Record<string, unknown> = {
     ...DEFAULT_CONFIG,
-    ...(typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}),
+    ...source,
   };
-  const opponents = clamp(Math.round(Number(raw.opponents) || 1), 1, 5);
-  const ids: unknown[] = Array.isArray(raw.difficulties) ? raw.difficulties : [];
+  let slots: unknown[] = DEFAULT_CONFIG.players;
+  if ('players' in source) {
+    slots = Array.isArray(source.players) ? source.players : DEFAULT_CONFIG.players;
+  } else if ('opponents' in source || 'difficulties' in source) {
+    // Read v1 preferences, then persist only the normalized roster representation.
+    const count = clamp(
+      Math.round(Number('opponents' in source ? source.opponents : 2) || 1),
+      1,
+      5,
+    );
+    const ids: unknown[] = Array.isArray(raw.difficulties) ? raw.difficulties : [];
+    slots = [
+      { kind: 'human' },
+      ...Array.from({ length: count }, (_, i) => ({ kind: 'bot', botId: ids[i] })),
+    ];
+  }
+  let hasHuman = false;
+  const players = Array.from({ length: clamp(slots.length, 2, 6) }, (_, i): PlayerSlot => {
+    const slot = slots[i];
+    if (typeof slot === 'object' && slot !== null && 'kind' in slot) {
+      if (slot.kind === 'human' && !hasHuman) {
+        hasHuman = true;
+        return { kind: 'human' };
+      }
+      if (slot.kind === 'bot' && 'botId' in slot && hasBot(slot.botId)) {
+        return { kind: 'bot', botId: slot.botId };
+      }
+    }
+    return { kind: 'bot', botId: 'medium' };
+  });
   const target = Number(raw.target);
   return {
-    opponents,
-    difficulties: Array.from({ length: opponents }, (_, i) => {
-      const id = ids[i];
-      return hasBot(id) ? id : 'medium';
-    }),
+    players,
     target: target === 0 || target === 3 || target === 5 || target === 10 ? target : 5,
     size:
       raw.size === 'compact' || raw.size === 'classic' || raw.size === 'large'
@@ -234,7 +261,7 @@ export class Game {
   // prepareRound initializes the map before the constructor returns.
   map!: GameMap;
   tanks: Tank[] = [];
-  bots = new Map<number, Bot>();
+  players = new Map<number, AbstractPlayer>();
   bullets: Bullet[] = [];
   powerups: Powerup[] = [];
   elapsed = 0;
@@ -248,7 +275,7 @@ export class Game {
     this.events = [];
     this.config = this.validateConfig(config);
     this.rng = randomGenerator(seed ?? Date.now());
-    this.scores = Array(this.config.opponents + 1).fill(0);
+    this.scores = Array(this.config.players.length).fill(0);
     this.round = 0;
     this.state = 'ready';
     this.particles = [];
@@ -258,6 +285,10 @@ export class Game {
   }
   validateConfig(config: unknown): GameConfig {
     return validateGameConfig(config);
+  }
+  get humanId(): number | null {
+    const id = this.config.players.findIndex((slot) => slot.kind === 'human');
+    return id === -1 ? null : id;
   }
   emit(event: GameEvent) {
     this.events.push(event);
@@ -274,7 +305,7 @@ export class Game {
       .toUpperCase();
   }
   prepareRound(seed?: Seed) {
-    this.bots = new Map();
+    this.players = new Map();
     this.map = generateMap(this.config.size, this.config.density, seed ?? this.seed());
     this.bullets = [];
     this.powerups = [];
@@ -287,7 +318,7 @@ export class Game {
     const spawnCells = [];
     const first = Math.floor(this.rng() * this.map.cells.length);
     spawnCells.push(first);
-    while (spawnCells.length < this.config.opponents + 1) {
+    while (spawnCells.length < this.config.players.length) {
       let best = -1,
         score = -1;
       for (let id = 0; id < this.map.cells.length; id++) {
@@ -311,7 +342,7 @@ export class Game {
       const c = this.map.cells[id];
       return {
         id: i,
-        name: NAMES[i],
+        name: this.config.players[i].kind === 'human' ? 'You' : NAMES[i],
         color: COLORS[i],
         x: (c.x + 0.5) * CELL,
         y: (c.y + 0.5) * CELL,
@@ -334,11 +365,14 @@ export class Game {
         previousX: 0,
         previousY: 0,
         kills: 0,
-        difficulty: i ? this.config.difficulties[i - 1] : null,
+        controller: { ...this.config.players[i] },
       };
     });
     for (const tank of this.tanks) {
-      if (tank.difficulty !== null) this.bots.set(tank.id, createBot(tank.difficulty));
+      this.players.set(
+        tank.id,
+        tank.controller.kind === 'human' ? new Player() : createBot(tank.controller.botId),
+      );
     }
     this.emit({ type: 'map' });
   }
@@ -406,20 +440,12 @@ export class Game {
       const oldX = tank.x,
         oldY = tank.y,
         oldAngle = tank.angle;
-      if (tank.id === 0) {
-        tank.steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
-        tank.throttle = Number(Boolean(input.forward)) - Number(Boolean(input.backward));
-        tank.fire = Boolean(input.fire);
-      } else {
-        tank.think -= dt;
-        if (tank.think <= 0) {
-          this.think(tank);
-          tank.think = this.getBotController(tank.id).profile.reaction * (0.85 + this.rng() * 0.3);
-        }
+      const { profile } = this.getPlayerController(tank.id);
+      tank.think -= dt;
+      if (profile.reaction === 0 || tank.think <= 0) {
+        this.think(tank, input);
+        tank.think = profile.reaction === 0 ? 0 : profile.reaction * (0.85 + this.rng() * 0.3);
       }
-      const profile = tank.id
-        ? this.getBotController(tank.id).profile
-        : { speed: PLAYER_SPEED, turn: 3.7 };
       const rotated = this.turnTank(tank, tank.steer * profile.turn * dt);
       const driveX = tank.x,
         driveY = tank.y;
@@ -442,8 +468,7 @@ export class Game {
         this.tracks.push({ x: tank.x, y: tank.y, angle: tank.angle, life: 9 });
       }
       const driven = Math.hypot(tank.x - driveX, tank.y - driveY);
-      if (tank.id && ((tank.throttle && driven < 0.1) || (tank.steer && !rotated)))
-        tank.stuck += dt;
+      if ((tank.throttle && driven < 0.1) || (tank.steer && !rotated)) tank.stuck += dt;
       else tank.stuck = Math.max(0, tank.stuck - dt);
       if (tank.fire) this.fire(tank);
     }
@@ -555,9 +580,8 @@ export class Game {
     // Never clamp a shell back into its own hull. A blocked muzzle cannot fire.
     if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return false;
     const spread = tank.power === 'scatter' ? [-0.17, 0, 0.17] : [0];
-    const error = tank.id
-      ? (this.rng() - 0.5) * 2 * this.getBotController(tank.id).profile.error
-      : 0;
+    const { profile } = this.getPlayerController(tank.id);
+    const error = profile.error ? (this.rng() - 0.5) * 2 * profile.error : 0;
     for (const offset of spread.slice(0, 5 - active)) {
       const angle = tank.angle + offset + error;
       const dx = Math.cos(angle),
@@ -574,12 +598,7 @@ export class Game {
         dead: false,
       });
     }
-    tank.cooldown =
-      tank.power === 'rapid'
-        ? 0.13
-        : tank.id
-          ? this.getBotController(tank.id).profile.cooldown
-          : 0.32;
+    tank.cooldown = tank.power === 'rapid' ? 0.13 : profile.cooldown;
     this.burst(muzzle.x, muzzle.y, '#f2d980', 4, 35, 0.18);
     this.emit({ type: 'fire', ...{ id: tank.id } });
     return true;
@@ -750,15 +769,23 @@ export class Game {
       },
     );
   }
-  private getBotController(id: number): Bot {
-    const bot = this.bots.get(id);
-    if (!bot) throw new Error('Missing controller for bot ' + id);
-    return bot;
+  private getPlayerController(id: number): AbstractPlayer {
+    const player = this.players.get(id);
+    if (!player) throw new Error('Missing controller for player ' + id);
+    return player;
   }
-  think(tank: Tank) {
-    const decision = this.getBotController(tank.id).decide(this.getBotContext(tank));
+  think(tank: Tank, input: PlayerInput = {}) {
+    let observation: BotContext | undefined;
+    const decision = this.getPlayerController(tank.id).decide(
+      Object.freeze({
+        input: Object.freeze(tank.id === this.humanId ? { ...input } : {}),
+        observe: () => (observation ??= this.getBotContext(tank)),
+      }),
+    );
     if (decision && 'then' in decision && typeof decision.then === 'function') {
-      throw new TypeError('Bot.decide(context) must return a synchronous movement decision.');
+      throw new TypeError(
+        'AbstractPlayer.decide(context) must return a synchronous movement decision.',
+      );
     }
     tank.steer =
       typeof decision?.steer === 'number' && Number.isFinite(decision.steer)

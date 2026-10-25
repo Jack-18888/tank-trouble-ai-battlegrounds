@@ -1,26 +1,29 @@
 # Adding a bot
 
-Extend `Bot`, implement `decide(context)`, and register the class. The engine and setup UI both use the registry, so new types do not need changes in either of those modules.
+Extend `AbstractPlayer`, implement `decide(context)`, and register the class as a bot. The engine and setup UI both use the registry, so new types do not need changes in either of those modules. Every tank can select a bot controller, including the first tank; matches support zero or one human.
 
-The public entry point is `src/bots/index.ts`. It exports `Bot`, `EasyBot`, `MediumBot`, `HardBot`, `registerBot`, `createBot`, `hasBot`, `getBotType`, and `getBotTypes`, plus the `BotContext`, `BotDecision`, `BotProfile`, `BotMetadata`, and `BotConstructor` types. `Bot` is a TypeScript abstract class, so missing implementations and incompatible decisions are compiler errors.
+The shared entry point is `src/players/index.ts`. It exports `AbstractPlayer`, the keyboard/touch-controlled `Player`, `HUMAN_PROFILE`, `assignController`, and the `PlayerContext`, `PlayerDecision`, and `PlayerProfile` types. `AbstractPlayer` is a TypeScript abstract class, so missing implementations and incompatible decisions are compiler errors. The former `Bot` export has been removed.
+
+`src/bots/index.ts` exports `EasyBot`, `MediumBot`, `HardBot`, `registerBot`, `createBot`, `hasBot`, `getBotType`, and `getBotTypes`, plus the bot-specific `BotContext`, `BotMetadata`, and `BotConstructor` types.
 
 ## Implement a strategy
 
 For example, add `src/bots/sentry-bot.ts`. This bot stays still, remembers an enemy, turns toward it, and fires when its current shot would hit an opponent:
 
 ```ts
-import { Bot } from './bot.ts';
-import type { BotContext, BotDecision } from './types.ts';
+import { AbstractPlayer } from '../players/index.ts';
+import type { PlayerContext, PlayerDecision } from '../players/index.ts';
 import { angleDiff, clamp } from '../math.ts';
 
-export class SentryBot extends Bot {
+export class SentryBot extends AbstractPlayer {
   private targetId: number | null = null;
 
   constructor() {
     super({ reaction: 0.1 });
   }
 
-  override decide(context: BotContext): BotDecision {
+  override decide({ observe }: PlayerContext): PlayerDecision {
+    const context = observe();
     const { self, enemies } = context;
     const target = enemies.find((tank) => tank.id === this.targetId) ?? enemies[0];
     if (!target) return {};
@@ -50,7 +53,7 @@ registerBot('sentry', SentryBot, {
 });
 ```
 
-It now appears in the difficulty buttons and every opponent dropdown. `label`, `tagline`, and `description` are optional; sensible defaults are supplied. IDs must start with a lowercase letter and contain only lowercase letters, digits, and hyphens. Duplicate IDs and classes that do not implement the base contract are rejected.
+It now appears in the difficulty buttons and every tank's controller dropdown alongside Human. Difficulty presets update bot slots only. `label`, `tagline`, and `description` are optional; sensible defaults are supplied. IDs must start with a lowercase letter and contain only lowercase letters, digits, and hyphens. Duplicate IDs and classes that do not implement the base contract are rejected.
 
 For a programmatic match, use the registered ID in the existing configuration:
 
@@ -58,17 +61,16 @@ For a programmatic match, use the registered ID in the existing configuration:
 import { Game } from './src/engine.ts';
 
 const game = new Game({
-  opponents: 2,
-  difficulties: ['sentry', 'hard'],
+  players: [{ kind: 'human' }, { kind: 'bot', botId: 'sentry' }, { kind: 'bot', botId: 'hard' }],
 });
 game.start();
 ```
 
-Register before constructing the game or loading the setup UI. Unknown IDs in saved preferences fall back to Medium, allowing a removed custom bot to leave the game usable.
+Register before constructing the game or loading the setup UI. Unknown IDs in saved preferences fall back to Medium, allowing a removed custom bot to leave the game usable. Omit the human slot for a bot-only match. Rosters contain 2–6 tanks; validation pads short rosters with Medium bots, truncates long ones, and retains only the first human (additional humans become Medium bots). Saved settings from the old `opponents`/`difficulties` format migrate automatically; an explicit `players` field takes precedence.
 
 ## Decision contract
 
-`abstract decide(context: BotContext): BotDecision` is the required method. It is synchronous. It returns an object with any of these controls:
+`abstract decide(context: PlayerContext): PlayerDecision` is the required method. It is synchronous. `context.input` is immutable and contains the current keyboard/touch input for the human slot, or an empty object for bots. `context.observe()` lazily creates the existing detached, frozen `BotContext` world snapshot and returns the same snapshot on repeated calls within a decision. Human controllers do not need to request observations. It returns an object with any of these controls:
 
 | Field      | Meaning                                                             | Default |
 | ---------- | ------------------------------------------------------------------- | ------- |
@@ -78,7 +80,7 @@ Register before constructing the game or loading the setup UI. Unknown IDs in sa
 
 Numbers are clamped to [-1, 1]. Missing or non-finite numbers become zero; only boolean `true` fires. The game owns movement, collisions, projectiles, scoring, and all timing. Returning a promise produces a clear contract error.
 
-The last decision remains active until the next call. Each opponent receives its own controller instance, recreated at the beginning of each round. Store strategy memory in instance fields. Decisions stop while the game is paused, during countdowns, after elimination, and between rounds.
+The last decision remains active until the next call. Every tank receives its own controller instance in `game.players`, recreated at the beginning of each round. Store strategy memory in instance fields. Decisions stop while the game is paused, during countdowns, after elimination, and between rounds. `game.humanId` identifies the human tank, or is `null` in bot-only matches. `game.update(dt, input)` supplies human input regardless of its slot. Each tank's `controller` metadata describes its human or bot configuration.
 
 ## Available game information
 
@@ -121,8 +123,8 @@ Pass overrides to `super(profile)` for the following immutable settings:
 | `error`    | 0.045   | Maximum random firing-angle error in radians                       |
 | `cooldown` | 0.72    | Seconds between shots                                              |
 
-All settings must be finite and positive, except `error`, which may be zero. Reaction time and strategy memory are separate from the fixed physics timestep. Power-ups can override firing cooldown just as they do for the player.
+All settings must be finite and positive, except `error` and `reaction`, which may be zero. Zero reaction samples controls every simulation tick without random timing variation; strategies using `CombatStrategy` should retain a positive reaction interval. The human `Player` uses speed 114, turn rate 3.7, reaction 0, error 0, and cooldown 0.32. Reaction time and strategy memory are separate from the fixed physics timestep. Power-ups can override firing cooldown for all players.
 
-Easy, Medium, and Hard each extend `Bot` directly and implement their own `decide` method. Each owns a `CombatStrategy` from `src/bots/combat.ts`, with independent route memory in `MazeNavigator`. A route keeps its cell-center waypoint until the tank reaches it, then advances; crossing a cell boundary does not reset the waypoint. Bots align before driving through a corridor and brake near turns. Hard predicts moving targets and takes opportunistic bank shots while pursuing, so firing decisions do not keep replacing its travel heading. Medium and Hard dodge nearby shells; Easy applies its own firing hesitation. Their constructors retain the existing movement and firing profiles. A custom class can compose `CombatStrategy` or implement a completely different strategy.
+`Player`, `EasyBot`, `MediumBot`, and `HardBot` each extend `AbstractPlayer` directly and implement their own `decide` method. Each bot owns a `CombatStrategy` from `src/bots/combat.ts`, with independent route memory in `MazeNavigator`. A route keeps its cell-center waypoint until the tank reaches it, then advances; crossing a cell boundary does not reset the waypoint. Bots align before driving through a corridor and brake near turns. Hard predicts moving targets and takes opportunistic bank shots while pursuing, so firing decisions do not keep replacing its travel heading. Medium and Hard dodge nearby shells; Easy applies its own firing hesitation. Their constructors retain the existing movement and firing profiles. A custom class can compose `CombatStrategy` or implement a completely different strategy.
 
 Run `npm run check` and `npm run build` after adding a bot. `tests/bots.test.ts` covers the extension contract, registration, observations, query consistency, execution in the game, independent memory, and round resets. The browser check also registers a custom implementation and exercises it through the real setup UI.

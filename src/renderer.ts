@@ -125,7 +125,7 @@ export class Renderer {
     for (let c = 0; c < map.cols; c += map.cols > 12 ? 2 : 1)
       ctx.fillText(String(c + 1).padStart(2, '0'), ox + (c + 0.5) * CELL * scale, oy - 10);
     ctx.textAlign = 'left';
-    if (!game.tanks[0].alive && game.state === 'playing') {
+    if (game.humanId !== null && !game.tanks[game.humanId].alive && game.state === 'playing') {
       ctx.fillStyle = '#f4f6e8e8';
       ctx.fillRect(this.width / 2 - 100, this.height - 26, 200, 20);
       ctx.fillStyle = '#61734e';
@@ -193,8 +193,9 @@ export class Renderer {
   }
   drawTank(tank: Tank, time: number, game: Game) {
     const ctx = this.ctx;
-    if (tank.id === 0) {
-      ctx.strokeStyle = '#376b4840';
+    const human = tank.id === game.humanId;
+    if (human) {
+      ctx.strokeStyle = `${tank.color}40`;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([3, 4]);
       ctx.beginPath();
@@ -260,14 +261,14 @@ export class Renderer {
       ctx.textAlign = 'center';
       ctx.fillText(tank.power === 'rapid' ? 'ϟ' : '⋔', tank.x, tank.y - 25);
     }
-    ctx.font = `${tank.id ? '' : 'bold '}9px Consolas, monospace`;
+    ctx.font = `${human ? 'bold ' : ''}9px Consolas, monospace`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = tank.id ? '#61734dbb' : '#356446';
-    ctx.fillText(tank.id ? tank.name.toUpperCase() : 'YOU', tank.x, tank.y + 30);
-    if (tank.id === 0 && game.state === 'playing') {
-      const active = game.bullets.filter((b) => b.owner === 0).length;
+    ctx.fillStyle = human ? tank.color : '#61734dbb';
+    ctx.fillText(human ? 'YOU' : tank.name.toUpperCase(), tank.x, tank.y + 30);
+    if (human && game.state === 'playing') {
+      const active = game.bullets.filter((b) => b.owner === tank.id).length;
       for (let i = 0; i < 5; i++) {
-        ctx.fillStyle = i < 5 - active ? '#376b4899' : '#376b4820';
+        ctx.fillStyle = `${tank.color}${i < 5 - active ? '99' : '20'}`;
         ctx.fillRect(tank.x - 11 + i * 5, tank.y + 35, 3, 2);
       }
     }
