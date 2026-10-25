@@ -367,7 +367,7 @@ try {
     await screenshot('wall-turn-after');
     const trackStart = await evaluate<TurnResult>(`(() => {
     const {g,painter}=window.__cornerQa;
-    g.map.walls=[{x1:32,y1:100,x2:100,y2:100}];
+    g.map={...g.map,walls:[{x1:32,y1:100,x2:100,y2:100}]};
     const angle=-5*Math.PI/6;
     Object.assign(g.tanks[0],{x:100-18*Math.cos(angle)-11.5*Math.sin(angle)+.002,
       y:100-18*Math.sin(angle)+11.5*Math.cos(angle),angle,leftTread:0,rightTread:0});
