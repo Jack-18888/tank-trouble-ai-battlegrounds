@@ -11,6 +11,10 @@ export default defineConfig([
     languageOptions: { globals: globals.browser },
   },
   {
+    files: ['src/bots/context.js'],
+    languageOptions: { globals: { structuredClone: 'readonly' } },
+  },
+  {
     files: ['*.config.js', 'scripts/**/*.mjs', 'tests/**/*.js'],
     languageOptions: { globals: globals.node },
   },

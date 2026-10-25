@@ -7,41 +7,17 @@ import {
   muzzlePosition,
   SHELL_RADIUS,
 } from './geometry.js';
+import { clamp, distance } from './math.js';
+import { createBot, hasBot } from './bots/index.js';
+import { createBotContext } from './bots/context.js';
+
+export { clamp, angleDiff, distance } from './math.js';
 export const CELL = 64;
 export const PLAYER_SPEED = 114;
 export const SHELL_SPEED = 140;
 export const SHELL_LIFETIME = 7.5;
 export const COLORS = ['#376b48', '#d17a4d', '#b39b40', '#5e889e', '#9680ad', '#bd6877'];
 export const NAMES = ['You', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
-export const LEVELS = {
-  easy: {
-    speed: 78,
-    turn: 2.4,
-    reaction: 0.55,
-    error: 0.16,
-    cooldown: 1.15,
-    dodge: false,
-    bank: false,
-  },
-  medium: {
-    speed: 96,
-    turn: 3.15,
-    reaction: 0.24,
-    error: 0.045,
-    cooldown: 0.72,
-    dodge: true,
-    bank: false,
-  },
-  hard: {
-    speed: 108,
-    turn: 3.9,
-    reaction: 0.11,
-    error: 0.012,
-    cooldown: 0.46,
-    dodge: true,
-    bank: true,
-  },
-};
 export const DEFAULT_CONFIG = {
   opponents: 2,
   difficulties: ['medium', 'medium'],
@@ -50,9 +26,6 @@ export const DEFAULT_CONFIG = {
   target: 5,
   powerups: true,
 };
-export const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-export const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
-export const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export function randomGenerator(seed) {
   let value = 2166136261;
@@ -197,7 +170,7 @@ export class Game {
     const c = { ...DEFAULT_CONFIG, ...config };
     c.opponents = clamp(Math.round(Number(c.opponents) || 1), 1, 5);
     c.difficulties = Array.from({ length: c.opponents }, (_, i) =>
-      LEVELS[c.difficulties?.[i]] ? c.difficulties[i] : 'medium',
+      hasBot(c.difficulties?.[i]) ? c.difficulties[i] : 'medium',
     );
     c.target = [0, 3, 5, 10].includes(Number(c.target)) ? Number(c.target) : 5;
     c.size = ['compact', 'classic', 'large'].includes(c.size) ? c.size : 'classic';
@@ -220,6 +193,7 @@ export class Game {
       .toUpperCase();
   }
   prepareRound(seed) {
+    this.bots = new Map();
     this.map = generateMap(this.config.size, this.config.density, seed ?? this.seed());
     this.bullets = [];
     this.powerups = [];
@@ -280,6 +254,9 @@ export class Game {
         difficulty: i ? this.config.difficulties[i - 1] : null,
       };
     });
+    for (const tank of this.tanks) {
+      if (tank.id) this.bots.set(tank.id, createBot(tank.difficulty));
+    }
     this.emit('map');
   }
   start() {
@@ -353,10 +330,10 @@ export class Game {
         tank.think -= dt;
         if (tank.think <= 0) {
           this.think(tank);
-          tank.think = LEVELS[tank.difficulty].reaction * (0.85 + this.rng() * 0.3);
+          tank.think = this.bots.get(tank.id).profile.reaction * (0.85 + this.rng() * 0.3);
         }
       }
-      const profile = tank.id ? LEVELS[tank.difficulty] : { speed: PLAYER_SPEED, turn: 3.7 };
+      const profile = tank.id ? this.bots.get(tank.id).profile : { speed: PLAYER_SPEED, turn: 3.7 };
       const rotated = this.turnTank(tank, tank.steer * profile.turn * dt);
       this.moveTank(
         tank,
@@ -417,7 +394,7 @@ export class Game {
     // Never clamp a shell back into its own hull. A blocked muzzle cannot fire.
     if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return false;
     const spread = tank.power === 'scatter' ? [-0.17, 0, 0.17] : [0];
-    const error = tank.id ? (this.rng() - 0.5) * 2 * LEVELS[tank.difficulty].error : 0;
+    const error = tank.id ? (this.rng() - 0.5) * 2 * this.bots.get(tank.id).profile.error : 0;
     for (const offset of spread.slice(0, 5 - active)) {
       const angle = tank.angle + offset + error;
       const dx = Math.cos(angle),
@@ -435,7 +412,7 @@ export class Game {
       });
     }
     tank.cooldown =
-      tank.power === 'rapid' ? 0.13 : tank.id ? LEVELS[tank.difficulty].cooldown : 0.32;
+      tank.power === 'rapid' ? 0.13 : tank.id ? this.bots.get(tank.id).profile.cooldown : 0.32;
     this.burst(muzzle.x, muzzle.y, '#f2d980', 4, 35, 0.18);
     this.emit('fire', { id: tank.id });
     return true;
@@ -519,13 +496,13 @@ export class Game {
     this.emit('score');
     this.emit('state');
   }
-  lineOfSight(a, b) {
-    return !firstWall(this.map, a.x, a.y, b.x - a.x, b.y - a.y, 5);
+  lineOfSight(a, b, map = this.map) {
+    return !firstWall(map, a.x, a.y, b.x - a.x, b.y - a.y, 5);
   }
   // Predict the first tank a shot meets, including optional ricochets.
-  shotTarget(tank, angle, maxBounces = 0) {
+  shotTarget(tank, angle, maxBounces = 0, scene = this) {
     const muzzle = muzzlePosition(tank, angle);
-    if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return null;
+    if (firstWall(scene.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return null;
     let { x, y } = muzzle;
     let vx = Math.cos(angle),
       vy = Math.sin(angle),
@@ -534,10 +511,10 @@ export class Game {
       const range = SHELL_SPEED * SHELL_LIFETIME - traveled;
       const dx = vx * range,
         dy = vy * range;
-      const wall = firstWall(this.map, x, y, dx, dy);
+      const wall = firstWall(scene.map, x, y, dx, dy);
       let first = wall ? wall.t : 1;
       let target = null;
-      for (const other of this.tanks) {
+      for (const other of scene.tanks) {
         if (!other.alive || (other.id === tank.id && bounce === 0)) continue;
         const t = sweepTank(x, y, dx, dy, other);
         if (t !== null && t < first) {
@@ -556,93 +533,58 @@ export class Game {
     }
     return null;
   }
+  getBotContext(tank) {
+    return createBotContext(
+      {
+        self: tank,
+        tanks: this.tanks,
+        enemies: this.tanks.filter((other) => other.alive && other.id !== tank.id),
+        bullets: this.bullets.map(({ x, y, vx, vy, owner, life, age, bounces }) => ({
+          x,
+          y,
+          vx,
+          vy,
+          owner,
+          life,
+          age,
+          bounces,
+        })),
+        powerups: this.powerups,
+        map: this.map,
+        match: {
+          round: this.round,
+          elapsed: this.elapsed,
+          scores: this.scores,
+          target: this.config.target,
+          state: this.state,
+        },
+        rules: {
+          cellSize: CELL,
+          playerSpeed: PLAYER_SPEED,
+          shellSpeed: SHELL_SPEED,
+          shellLifetime: SHELL_LIFETIME,
+          maxShells: 5,
+        },
+      },
+      {
+        random: this.rng,
+        cellAt,
+        findPath,
+        lineOfSight: this.lineOfSight.bind(this),
+        predictShot: this.shotTarget.bind(this),
+      },
+    );
+  }
   think(tank) {
-    const profile = LEVELS[tank.difficulty];
-    const enemies = this.tanks.filter((t) => t.alive && t.id !== tank.id);
-    if (!enemies.length) {
-      tank.fire = false;
-      tank.throttle = 0;
-      tank.steer = 0;
-      return;
+    const decision = this.bots.get(tank.id).decide(this.getBotContext(tank));
+    if (decision && typeof decision.then === 'function') {
+      throw new TypeError('Bot.decide(context) must return a synchronous movement decision.');
     }
-    enemies.sort((a, b) => distance(a, tank) - distance(b, tank));
-    const visible = enemies.find((t) => this.lineOfSight(tank, t));
-    const target = visible || enemies[0];
-    let desired,
-      throttle = 1;
-    if (visible) {
-      const lead = profile.bank ? Math.min(0.22, distance(tank, target) / SHELL_SPEED) : 0;
-      const predicted = { x: target.x + target.vx * lead, y: target.y + target.vy * lead };
-      desired = Math.atan2(predicted.y - tank.y, predicted.x - tank.x);
-      throttle = distance(tank, target) > 125 ? 0.85 : distance(tank, target) < 65 ? -0.55 : 0.2;
-    } else {
-      const from = cellAt(this.map, tank.x, tank.y),
-        to = cellAt(this.map, target.x, target.y);
-      const path = findPath(this.map, from, to);
-      let next = this.map.cells[path[1] ?? from];
-      // Center before a turn to keep the tracks and barrel clear of corners.
-      const current = this.map.cells[from];
-      const cx = (current.x + 0.5) * CELL,
-        cy = (current.y + 0.5) * CELL;
-      if (
-        (next.x !== current.x && Math.abs(tank.y - cy) > 4) ||
-        (next.y !== current.y && Math.abs(tank.x - cx) > 4)
-      )
-        next = current;
-      desired = Math.atan2((next.y + 0.5) * CELL - tank.y, (next.x + 0.5) * CELL - tank.x);
-    }
-    let difference = angleDiff(desired, tank.angle);
-    if (profile.bank && !visible && tank.cooldown <= 0 && this.rng() < 0.65) {
-      for (let i = 0; i < 13; i++) {
-        const candidate = tank.angle + (i - 6) * 0.19;
-        const hit = this.shotTarget(tank, candidate, 1);
-        if (hit && hit.id !== tank.id && hit.distance < 750) {
-          desired = candidate;
-          difference = angleDiff(desired, tank.angle);
-          throttle = 0.1;
-          break;
-        }
-      }
-    }
-    if (profile.dodge) {
-      let danger = null,
-        minThreat = 65;
-      for (const b of this.bullets) {
-        if (b.owner === tank.id && b.bounces === 0) continue;
-        const time = clamp(
-          ((tank.x - b.x) * b.vx + (tank.y - b.y) * b.vy) / SHELL_SPEED ** 2,
-          0,
-          profile.bank ? 0.65 : 0.38,
-        );
-        const miss = Math.hypot(b.x + b.vx * time - tank.x, b.y + b.vy * time - tank.y);
-        if (miss < 27 && distance(b, tank) < 200 && miss < minThreat) {
-          danger = b;
-          minThreat = miss;
-        }
-      }
-      if (danger) {
-        const projection = (tank.x - danger.x) * -danger.vy + (tank.y - danger.y) * danger.vx;
-        const dodgeAngle =
-          Math.atan2(danger.vy, danger.vx) + (projection >= 0 ? Math.PI / 2 : -Math.PI / 2);
-        if (profile.bank || !visible) {
-          difference = angleDiff(dodgeAngle, tank.angle);
-          throttle = 1;
-        }
-      }
-    }
-    tank.steer =
-      Math.abs(difference) < 0.045
-        ? 0
-        : clamp(difference / (profile.turn * profile.reaction), -1, 1);
-    tank.throttle = Math.abs(difference) > 1 ? 0 : throttle;
-    if (tank.stuck > 0.7) {
-      tank.throttle = -0.65;
-      tank.steer = 1;
-      if (tank.stuck > 1.5) tank.stuck = 0;
-    }
-    const hit = this.shotTarget(tank, tank.angle, profile.bank ? 1 : 0);
-    tank.fire = Boolean(hit && hit.id !== tank.id && hit.distance < (profile.bank ? 900 : 650));
-    if (tank.difficulty === 'easy' && this.rng() < 0.3) tank.fire = false;
+    tank.steer = Number.isFinite(decision?.steer) ? clamp(decision.steer, -1, 1) : 0;
+    tank.throttle = Number.isFinite(decision?.throttle) ? clamp(decision.throttle, -1, 1) : 0;
+    tank.fire = decision?.fire === true;
+    // Keep the short-lived movement-stagnation sensor on the simulation side.
+    if (tank.stuck > 1.5) tank.stuck = 0;
   }
   updatePowerups(dt) {
     this.powerTimer -= dt;

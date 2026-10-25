@@ -1,8 +1,14 @@
-import { Game, DEFAULT_CONFIG, COLORS, NAMES, LEVELS } from './engine.js';
+import { Game, DEFAULT_CONFIG, COLORS, NAMES } from './engine.js';
+import { getBotType, getBotTypes, hasBot } from './bots/index.js';
 import { Renderer, tankIcon } from './renderer.js';
 import { Sound } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
+const escapeHTML = (value) =>
+  value.replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
+  );
 const storageKey = 'tank-trouble.preferences.v1';
 let saved = {};
 try {
@@ -48,11 +54,19 @@ function scoreboard() {
   $('scoreboard').innerHTML = game.tanks
     .map(
       (t) =>
-        `<div class="score-card ${t.alive ? '' : 'eliminated'}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === 0 ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.id === 0 ? 'THE HUMAN' : t.difficulty + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
+        `<div class="score-card ${t.alive ? '' : 'eliminated'}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === 0 ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.id === 0 ? 'THE HUMAN' : escapeHTML(getBotType(t.difficulty).label) + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
     )
     .join('');
 }
 function settingsUI() {
+  $('difficulty').replaceChildren(
+    ...getBotTypes().map((type) => {
+      const button = document.createElement('button');
+      button.dataset.value = type.id;
+      button.textContent = type.label;
+      return button;
+    }),
+  );
   $('opponent-count').textContent = config.opponents;
   $('opponent-minus').disabled = config.opponents <= 1;
   $('opponent-plus').disabled = config.opponents >= 5;
@@ -66,25 +80,19 @@ function settingsUI() {
     button.classList.toggle('selected', selected);
     button.setAttribute('aria-pressed', String(selected));
   }
-  const descriptions = {
-    easy: ['EASE INTO IT', 'Slower reactions. Plenty of room to find your feet.'],
-    medium: ['A FAIR FIGHT', 'Quick on the trigger. A little less forgiving.'],
-    hard: ['GOOD LUCK, HUMAN', 'Bank shots. Bullet dodges. Absolutely no mercy.'],
-  };
+  const type = getBotType(defaultDifficulty);
   const [label, description] = mixed
     ? ['MIXED COMPANY', 'A handpicked mix. Something for every opponent.']
-    : descriptions[defaultDifficulty];
+    : [type.tagline, type.description];
   $('difficulty-status').textContent = label;
   $('difficulty-description').textContent = description;
   $('bot-roster').innerHTML = config.difficulties
     .map(
       (d, i) =>
-        `<div class="bot-row"><span class="bot-swatch" style="background:${COLORS[i + 1]}"></span><span>${NAMES[i + 1]}</span><select data-bot="${i}" aria-label="${NAMES[i + 1]} difficulty">${Object.keys(
-          LEVELS,
-        )
+        `<div class="bot-row"><span class="bot-swatch" style="background:${COLORS[i + 1]}"></span><span>${NAMES[i + 1]}</span><select data-bot="${i}" aria-label="${NAMES[i + 1]} difficulty">${getBotTypes()
           .map(
-            (l) =>
-              `<option value="${l}" ${l === d ? 'selected' : ''}>${l[0].toUpperCase() + l.slice(1)}</option>`,
+            (type) =>
+              `<option value="${type.id}" ${type.id === d ? 'selected' : ''}>${escapeHTML(type.label)}</option>`,
           )
           .join('')}</select></div>`,
     )
@@ -248,13 +256,13 @@ $('opponent-plus').addEventListener('click', () => {
 });
 $('difficulty').addEventListener('click', (e) => {
   const level = e.target.dataset.value;
-  if (!LEVELS[level]) return;
+  if (!hasBot(level)) return;
   defaultDifficulty = level;
   config.difficulties.fill(level);
   setupChanged();
 });
 $('bot-roster').addEventListener('change', (e) => {
-  if (!LEVELS[e.target.value]) return;
+  if (!hasBot(e.target.value)) return;
   config.difficulties[Number(e.target.dataset.bot)] = e.target.value;
   defaultDifficulty = config.difficulties[0];
   setupChanged();
