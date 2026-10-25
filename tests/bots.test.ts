@@ -226,3 +226,50 @@ test('built-in controller decisions remain deterministic for a seeded game', () 
   assert.deepEqual(a.bullets, b.bullets);
   assert.deepEqual(a.scores, b.scores);
 });
+
+test('Hard follows maze routes to an idle player instead of circling its spawn cell', () => {
+  for (let seed = 0; seed < 10; seed++) {
+    const game = new Game(
+      { opponents: 1, difficulties: ['hard'], target: 0, powerups: false },
+      'chase-' + seed,
+    );
+    game.state = 'playing';
+    const bot = game.tanks[1],
+      player = game.tanks[0];
+    const start = { x: player.x, y: player.y };
+    // Isolate pursuit from shooting/dodging, which can end a round early.
+    bot.cooldown = 1e6;
+    const context = game.getBotContext(bot);
+    const path = context.findPath(context.cellAt(bot.x, bot.y), context.cellAt(player.x, player.y));
+    const visited = new Set<number>();
+    let acquired = false;
+    for (let frame = 0; frame < 120 * 20; frame++) {
+      game.update(1 / 120);
+      visited.add(game.getBotContext(bot).cellAt(bot.x, bot.y));
+      if (game.lineOfSight(bot, player)) {
+        acquired = true;
+        break;
+      }
+    }
+    assert.ok(acquired, `chase-${seed}: bot must reach sight of the player within 20 seconds`);
+    assert.ok(visited.size >= Math.min(4, path.length - 1), `chase-${seed}: must leave its spawn`);
+    assert.equal(player.x, start.x);
+    assert.equal(player.y, start.y);
+  }
+});
+
+test('Hard pursues and attacks an idle player with normal firing enabled', () => {
+  for (let seed = 0; seed < 10; seed++) {
+    const game = new Game(
+      { opponents: 1, difficulties: ['hard'], target: 0, powerups: false },
+      'chase-' + seed,
+    );
+    game.state = 'playing';
+    for (let frame = 0; frame < 120 * 20 && game.tanks[0].alive && game.tanks[1].alive; frame++) {
+      game.update(1 / 120);
+      game.drainEvents();
+    }
+    assert.equal(game.tanks[0].alive, false, `chase-${seed}: idle player should be attacked`);
+    assert.equal(game.tanks[1].alive, true, `chase-${seed}: bot must survive its approach`);
+  }
+});
