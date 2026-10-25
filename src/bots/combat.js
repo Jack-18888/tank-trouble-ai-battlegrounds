@@ -8,8 +8,7 @@ export function decideCombat(context, profile, { dodge = false, bank = false } =
   if (!enemies.length) return { steer: 0, throttle: 0, fire: false };
   const visible = enemies.find((target) => context.lineOfSight(tank, target));
   const target = visible || enemies[0];
-  let desired,
-    throttle = 1;
+  let desired, throttle;
   if (visible) {
     const lead = bank ? Math.min(0.22, distance(tank, target) / rules.shellSpeed) : 0;
     const predicted = { x: target.x + target.vx * lead, y: target.y + target.vy * lead };
@@ -32,6 +31,13 @@ export function decideCombat(context, profile, { dodge = false, bank = false } =
       (next.y + 0.5) * rules.cellSize - tank.y,
       (next.x + 0.5) * rules.cellSize - tank.x,
     );
+    // Controls remain active until the next decision. Brake near a waypoint
+    // so smoother wall turns do not make the tank overshoot and orbit it.
+    const waypointDistance = Math.hypot(
+      (next.x + 0.5) * rules.cellSize - tank.x,
+      (next.y + 0.5) * rules.cellSize - tank.y,
+    );
+    throttle = Math.min(1, waypointDistance / (profile.speed * profile.reaction * 1.15));
   }
   let difference = angleDiff(desired, tank.angle);
   if (bank && !visible && tank.cooldown <= 0 && context.random() < 0.65) {

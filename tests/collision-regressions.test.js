@@ -71,13 +71,14 @@ test('shells hit visible track corners and the gun barrel, and miss empty space'
   );
 });
 
-test('rotation cannot put the barrel or tracks inside a wall or another tank', () => {
+test('rotation makes room for the barrel without putting tracks inside a wall', () => {
   const game = arena(),
     tank = game.tanks[0];
   game.map.walls.push(wall(122, 40, 122, 160));
   tank.angle = -Math.PI / 2;
   assert.equal(game.canPlaceTank(tank), true);
-  assert.equal(game.turnTank(tank, Math.PI / 2), false);
+  assert.equal(game.turnTank(tank, Math.PI / 2), true);
+  assert.ok(tank.x < 100, 'turning into contact should move the tank clear of the wall');
   assert.equal(game.canPlaceTank(tank), true);
   const other = { ...tank, id: 1, x: 125, y: 100, angle: Math.PI };
   assert.equal(
@@ -85,6 +86,113 @@ test('rotation cannot put the barrel or tracks inside a wall or another tank', (
     true,
     'barrel overlap must count between tanks',
   );
+});
+
+test('holding right turns a tank whose track is touching the wall', () => {
+  const game = arena(),
+    tank = game.tanks[0];
+  const edge = wall(122, 40, 122, 160);
+  game.map.walls.push(edge);
+  tank.angle = -Math.PI / 3;
+  const startAngle = tank.angle;
+  assert.equal(game.canPlaceTank(tank), true);
+  for (let i = 0; i < 40; i++) {
+    game.update(1 / 120, { right: true });
+    assert.equal(
+      tankWall(tank, edge),
+      false,
+      'turning must keep the full silhouette outside the wall',
+    );
+  }
+  assert.ok(Math.abs(tank.angle - startAngle - 3.7 / 3) < 1e-8);
+  assert.ok(tank.x < 99 && tank.x > 92, 'the tank should shift just enough to turn');
+  assert.ok(Math.abs(tank.y - 100) < 1e-8, 'a straight wall should not cause sideways drift');
+});
+
+test('wall-contact turning works in either direction against all four wall orientations', () => {
+  for (const rotation of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    for (const direction of [-1, 1]) {
+      const game = arena(),
+        tank = game.tanks[0];
+      const transform = (x, y) => [
+        100 + (x - 100) * Math.cos(rotation) - (y - 100) * Math.sin(rotation),
+        100 + (x - 100) * Math.sin(rotation) + (y - 100) * Math.cos(rotation),
+      ];
+      const [x1, y1] = transform(122, 40),
+        [x2, y2] = transform(122, 160);
+      const edge = wall(x1, y1, x2, y2);
+      game.map.walls = [edge];
+      tank.angle = (-direction * Math.PI) / 3 + rotation;
+      const start = tank.angle;
+      for (let i = 0; i < 40; i++) {
+        assert.equal(game.turnTank(tank, (direction * 3.7) / 120), true);
+        assert.equal(tankWall(tank, edge), false);
+      }
+      assert.ok(Math.abs(tank.angle - start - (direction * 3.7) / 3) < 1e-8);
+      assert.ok(distance(tank, { x: 100, y: 100 }) < 8);
+    }
+  }
+});
+
+test('turning in open space keeps the center fixed and turning away needs no correction', () => {
+  const game = arena(),
+    tank = game.tanks[0];
+  tank.angle = -Math.PI / 3;
+  assert.equal(game.turnTank(tank, Math.PI * 2), true);
+  assert.equal(tank.x, 100);
+  assert.equal(tank.y, 100);
+  game.map.walls.push(wall(122, 40, 122, 160));
+  tank.angle = -Math.PI / 3;
+  assert.equal(game.turnTank(tank, -0.2), true);
+  assert.equal(tank.x, 100);
+  assert.equal(tank.y, 100);
+});
+
+test('turning remains blocked when a narrow corridor cannot fit the tank', () => {
+  const game = arena(),
+    tank = game.tanks[0];
+  game.map.walls = [wall(80, 0, 80, 200), wall(122, 0, 122, 200)];
+  tank.angle = -Math.PI / 2;
+  assert.equal(game.canPlaceTank(tank), true);
+  assert.equal(game.turnTank(tank, Math.PI / 2), false);
+  assert.ok(tank.angle < -0.1);
+  for (let i = 0; i < 120; i++) {
+    game.turnTank(tank, 3.7 / 120);
+    assert.equal(game.canPlaceTank(tank), true);
+    assert.ok(tank.x > 80 && tank.x < 122);
+  }
+  assert.ok(tank.angle < -0.1, 'repeated steering must not squeeze through opposing walls');
+});
+
+test('wall-contact correction handles corners and does not push through thin walls', () => {
+  const game = arena(),
+    tank = game.tanks[0];
+  game.map.walls = [wall(122, -1000, 122, 1000), wall(-1000, 122, 1000, 122)];
+  tank.angle = -Math.PI / 3;
+  for (let i = 0; i < 600; i++) {
+    assert.equal(game.turnTank(tank, 3.7 / 120), true);
+    assert.equal(game.canPlaceTank(tank), true);
+    assert.ok(tank.x < 122 && tank.y < 122);
+  }
+  assert.ok(
+    distance(tank, { x: 100, y: 100 }) < 12,
+    'repeated turns must not accumulate large displacement',
+  );
+});
+
+test('rotation cannot shove another tank out of the way', () => {
+  const game = arena(),
+    tank = game.tanks[0],
+    other = game.tanks[1];
+  tank.angle = -Math.PI / 2;
+  Object.assign(other, { x: 141, y: 100, angle: Math.PI });
+  assert.equal(game.canPlaceTank(tank), true);
+  assert.equal(game.turnTank(tank, Math.PI / 2), false);
+  assert.equal(tank.x, 100);
+  assert.equal(tank.y, 100);
+  assert.equal(other.x, 141);
+  assert.equal(other.y, 100);
+  assert.equal(tanksOverlap(tank, other), false);
 });
 
 test('shots can graze the empty space beside a rounded wall cap', () => {

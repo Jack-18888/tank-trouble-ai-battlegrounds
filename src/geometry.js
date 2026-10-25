@@ -9,7 +9,7 @@ export const TANK_SHAPES = [
 export const BARREL_LENGTH = TANK_SHAPES[3].x + TANK_SHAPES[3].w;
 export const WALL_RADIUS = 3;
 export const SHELL_RADIUS = 2.7;
-const TANK_BOUND = 26;
+export const TANK_BOUND_RADIUS = 26;
 const EPS = 1e-8;
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 const core = (s) => ({ x: s.x + s.r, y: s.y + s.r, w: s.w - 2 * s.r, h: s.h - 2 * s.r });
@@ -102,6 +102,28 @@ function segmentBoxDistanceSq(ax, ay, bx, by, box) {
     ...corners(box).map(([x, y]) => pointSegmentDistanceSq(x, y, ax, ay, bx, by)),
   );
 }
+function closestSegmentBox(ax, ay, bx, by, box) {
+  const crossing = sweepBox(ax, ay, bx - ax, by - ay, box, true);
+  if (crossing) return { distance: 0 };
+  let closest = null;
+  const consider = (wallX, wallY, bodyX, bodyY) => {
+    const distance = Math.hypot(bodyX - wallX, bodyY - wallY);
+    if (!closest || distance < closest.distance) closest = { wallX, wallY, bodyX, bodyY, distance };
+  };
+  for (const [x, y] of [
+    [ax, ay],
+    [bx, by],
+  ]) {
+    consider(x, y, clamp(x, box.x, box.x + box.w), clamp(y, box.y, box.y + box.h));
+  }
+  const dx = bx - ax,
+    dy = by - ay;
+  for (const [x, y] of corners(box)) {
+    const t = clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+    consider(ax + t * dx, ay + t * dy, x, y);
+  }
+  return closest;
+}
 function localPoint(tank, x, y) {
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle),
@@ -118,7 +140,7 @@ function worldPoint(tank, x, y) {
 export function tankWall(tank, wall) {
   if (
     pointSegmentDistanceSq(tank.x, tank.y, wall.x1, wall.y1, wall.x2, wall.y2) >
-    (TANK_BOUND + WALL_RADIUS) ** 2
+    (TANK_BOUND_RADIUS + WALL_RADIUS) ** 2
   )
     return false;
   const [ax, ay] = localPoint(tank, wall.x1, wall.y1),
@@ -129,8 +151,32 @@ export function tankWall(tank, wall) {
   );
 }
 
+// Small rotations can sweep a track corner or barrel into a wall even though
+// the starting pose is clear. Return the exact separation needed for that
+// contact; the simulation limits and validates any resulting displacement.
+export function tankWallContact(tank, wall) {
+  if (!tankWall(tank, wall)) return null;
+  const [ax, ay] = localPoint(tank, wall.x1, wall.y1),
+    [bx, by] = localPoint(tank, wall.x2, wall.y2);
+  const c = Math.cos(tank.angle),
+    s = Math.sin(tank.angle);
+  let deepest = null;
+  for (let i = 0; i < cores.length; i++) {
+    const closest = closestSegmentBox(ax, ay, bx, by, cores[i]);
+    const depth = WALL_RADIUS + TANK_SHAPES[i].r - closest.distance;
+    // Starting from a valid pose and rotating in small increments keeps the
+    // cores apart. Leave deep/ambiguous overlap to the caller to reject.
+    if (depth <= EPS || closest.distance <= EPS) continue;
+    if (deepest && deepest.depth >= depth) continue;
+    const nx = (closest.bodyX - closest.wallX) / closest.distance;
+    const ny = (closest.bodyY - closest.wallY) / closest.distance;
+    deepest = { nx: nx * c - ny * s, ny: nx * s + ny * c, depth };
+  }
+  return deepest;
+}
+
 export function tanksOverlap(a, b) {
-  if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 >= (TANK_BOUND * 2) ** 2) return false;
+  if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 >= (TANK_BOUND_RADIUS * 2) ** 2) return false;
   for (let i = 0; i < cores.length; i++) {
     const box = cores[i];
     const polygon = corners(box)

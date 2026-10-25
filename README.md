@@ -58,6 +58,7 @@ Touchscreens get a direction pad and a fire button. The arena also supports full
 - Five active shells per tank; ricochets can hit the tank that fired them.
 - Shells travel about 23% faster than the player tank, leaving room to dodge.
 - Tracks, hulls, and barrels use their rendered, rotated shapes for collisions. Shells start beyond the muzzle; a blocked muzzle does not fire a shell back inside the tank.
+- Turning against a wall gently makes room for the tank to pivot. Gaps that cannot fit the tank and contact with other tanks still block movement.
 - Sound effects, saved match preferences, round scoring, and match results.
 
 Match play runs locally, and preferences use browser local storage. There are no accounts, servers, telemetry, or multiplayer connections in the game itself. Google Fonts is optional; local fallback fonts keep the game playable offline.
@@ -72,7 +73,7 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `src/audio.js`: synthesized Web Audio effects.
 - `src/style.css`: responsive arcade interface and reduced-motion support.
 - `tests/engine.test.js`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
-- `tests/collision-regressions.test.js`: wall-edge firing, muzzle clearance, rotated hitboxes, rounded wall caps, and relative shell/tank travel speed.
+- `tests/collision-regressions.test.js`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
 - `tests/bots.test.js`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
 
 To add a strategy, extend `Bot`, implement `decide(context)`, and register it in `src/bots/index.js`. It becomes selectable in match setup automatically. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.

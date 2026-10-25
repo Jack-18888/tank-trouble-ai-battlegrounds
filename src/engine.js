@@ -1,6 +1,8 @@
 // Pure simulation: no DOM, canvas, audio, or frame-rate dependent movement.
 import {
   tankWall,
+  tankWallContact,
+  TANK_BOUND_RADIUS,
   tanksOverlap,
   sweepWall,
   sweepTank,
@@ -335,6 +337,8 @@ export class Game {
       }
       const profile = tank.id ? this.bots.get(tank.id).profile : { speed: PLAYER_SPEED, turn: 3.7 };
       const rotated = this.turnTank(tank, tank.steer * profile.turn * dt);
+      const driveX = tank.x,
+        driveY = tank.y;
       this.moveTank(
         tank,
         Math.cos(tank.angle) * tank.throttle * profile.speed * dt,
@@ -348,7 +352,9 @@ export class Game {
         tank.tread = 0;
         this.tracks.push({ x: tank.x, y: tank.y, angle: tank.angle, life: 9 });
       }
-      if (tank.id && ((tank.throttle && moved < 0.1) || (tank.steer && !rotated))) tank.stuck += dt;
+      const driven = Math.hypot(tank.x - driveX, tank.y - driveY);
+      if (tank.id && ((tank.throttle && driven < 0.1) || (tank.steer && !rotated)))
+        tank.stuck += dt;
       else tank.stuck = Math.max(0, tank.stuck - dt);
       if (tank.fire) this.fire(tank);
     }
@@ -371,9 +377,30 @@ export class Game {
   turnTank(tank, angle) {
     if (!angle) return true;
     const steps = Math.ceil(Math.abs(angle) / 0.04);
+    const step = angle / steps;
     for (let i = 0; i < steps; i++) {
-      const pose = { ...tank, angle: tank.angle + angle / steps };
-      if (!this.canPlaceTank(pose)) return false;
+      const pose = { ...tank, angle: tank.angle + step };
+      if (!this.canPlaceTank(pose)) {
+        // Resolve only the small overlap created by this rotation. This lets
+        // a tank pivot away from wall contact without clipping or teleporting
+        // through a wall, or displacing another tank.
+        const maxShift = TANK_BOUND_RADIUS * Math.abs(step) * 2 + 0.01;
+        for (let pass = 0; pass < 6; pass++) {
+          let corrected = false;
+          for (const wall of this.map.walls) {
+            const contact = tankWallContact(pose, wall);
+            if (!contact) continue;
+            pose.x += contact.nx * (contact.depth + 0.001);
+            pose.y += contact.ny * (contact.depth + 0.001);
+            corrected = true;
+            if (Math.hypot(pose.x - tank.x, pose.y - tank.y) > maxShift) return false;
+          }
+          if (!corrected) break;
+        }
+        if (!this.canPlaceTank(pose)) return false;
+      }
+      tank.x = pose.x;
+      tank.y = pose.y;
       tank.angle = pose.angle;
     }
     return true;

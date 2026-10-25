@@ -277,6 +277,41 @@ try {
   // ResizeObserver clears its canvas while adjusting backing resolution.
   await evaluate(`window.__cornerQa.painter.draw(window.__cornerQa.g,0)`);
   await screenshot('wall-edge-fixed');
+  const turnStart = await evaluate(`(() => {
+    const {g,painter}=window.__cornerQa;
+    g.map={...g.map,walls:[{x1:122,y1:16,x2:122,y2:176}]};
+    Object.assign(g.tanks[0],{x:100,y:100,angle:-Math.PI/3,alive:true});
+    g.bullets=[];g.particles=[];g.tracks=[];g.state='playing';g.elapsed=0;g.settleTimer=null;
+    const tank=g.tanks[0];
+    const naiveBlocked=!g.canPlaceTank({...tank,angle:tank.angle+3.7/120});
+    const parent=document.getElementById('corner-qa').parentElement;
+    parent.querySelector('h1').textContent='Wall contact should not lock steering.';
+    parent.querySelector('p').textContent='Before: the track touches the wall and an in-place right turn would collide.';
+    painter.draw(g,0);
+    return {clear:g.canPlaceTank(tank),naiveBlocked,x:tank.x,y:tank.y,angle:tank.angle};
+  })()`);
+  assert.equal(turnStart.clear, true);
+  assert.equal(turnStart.naiveBlocked, true, 'fixture must recreate the blocked in-place turn');
+  await screenshot('wall-turn-before');
+  const turnEnd = await evaluate(`(() => {
+    const {g,painter}=window.__cornerQa;
+    let clear=true;
+    for(let i=0;i<40;i++){
+      g.update(1/120,{right:true});
+      clear=clear&&g.canPlaceTank(g.tanks[0]);
+    }
+    const tank=g.tanks[0];
+    const parent=document.getElementById('corner-qa').parentElement;
+    parent.querySelector('h1').textContent='Turn right. Stay clear.';
+    parent.querySelector('p').textContent='After: steering gently makes room beside the wall without clipping the tracks or barrel.';
+    painter.draw(g,1/3);
+    return {clear,x:tank.x,y:tank.y,angle:tank.angle};
+  })()`);
+  assert.equal(turnEnd.clear, true);
+  assert.ok(Math.abs(turnEnd.angle - turnStart.angle - 3.7 / 3) < 1e-8);
+  assert.ok(turnEnd.x < turnStart.x && turnEnd.x > turnStart.x - 8);
+  assert.ok(Math.abs(turnEnd.y - turnStart.y) < 1e-8);
+  await screenshot('wall-turn-after');
   assert.deepEqual(errors, [], 'browser logged errors');
   console.log(
     JSON.stringify(
@@ -297,6 +332,7 @@ try {
           'saved preferences',
           'registered custom bot appears in setup and controls a live opponent',
           'wall-edge firing regression',
+          'right steering at wall contact with no silhouette overlap',
           'no runtime errors',
         ],
         screenshots: path.resolve('.qa'),
