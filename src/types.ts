@@ -22,6 +22,10 @@ export interface WallContact {
   ny: number;
   depth: number;
 }
+export interface TankWallContact extends WallContact {
+  part: 'leftTrack' | 'rightTrack' | 'hull' | 'barrel';
+  point: Point;
+}
 export interface Wall {
   x1: number;
   y1: number;
@@ -86,6 +90,8 @@ export interface Tank extends TankPose {
   vx: number;
   vy: number;
   tread: number;
+  leftTread: number;
+  rightTread: number;
   think: number;
   steer: number;
   throttle: number;

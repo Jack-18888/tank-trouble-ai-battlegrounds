@@ -2,6 +2,8 @@
 import {
   tankWall,
   tankWallContact,
+  tankWallContacts,
+  TRACK_SPACING,
   TANK_BOUND_RADIUS,
   tanksOverlap,
   sweepWall,
@@ -322,6 +324,8 @@ export class Game {
         vx: 0,
         vy: 0,
         tread: 0,
+        leftTread: 0,
+        rightTread: 0,
         think: this.rng() * 0.4,
         steer: 0,
         throttle: 0,
@@ -400,7 +404,8 @@ export class Game {
         if (tank.powerTime <= 0) tank.power = null;
       }
       const oldX = tank.x,
-        oldY = tank.y;
+        oldY = tank.y,
+        oldAngle = tank.angle;
       if (tank.id === 0) {
         tank.steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
         tank.throttle = Number(Boolean(input.forward)) - Number(Boolean(input.backward));
@@ -426,6 +431,11 @@ export class Game {
       tank.vx = (tank.x - oldX) / dt;
       tank.vy = (tank.y - oldY) / dt;
       const moved = Math.hypot(tank.x - oldX, tank.y - oldY);
+      const rotation = tank.angle - oldAngle;
+      const heading = oldAngle + rotation / 2;
+      const forward = (tank.x - oldX) * Math.cos(heading) + (tank.y - oldY) * Math.sin(heading);
+      tank.leftTread = (tank.leftTread + forward + (rotation * TRACK_SPACING) / 2) % 5;
+      tank.rightTread = (tank.rightTread + forward - (rotation * TRACK_SPACING) / 2) % 5;
       tank.tread += moved;
       if (tank.tread >= 8) {
         tank.tread = 0;
@@ -464,19 +474,7 @@ export class Game {
         // a tank pivot away from wall contact without clipping or teleporting
         // through a wall, or displacing another tank.
         const maxShift = TANK_BOUND_RADIUS * Math.abs(step) * 2 + 0.01;
-        for (let pass = 0; pass < 6; pass++) {
-          let corrected = false;
-          for (const wall of this.map.walls) {
-            const contact = tankWallContact(pose, wall);
-            if (!contact) continue;
-            pose.x += contact.nx * (contact.depth + 0.001);
-            pose.y += contact.ny * (contact.depth + 0.001);
-            corrected = true;
-            if (Math.hypot(pose.x - tank.x, pose.y - tank.y) > maxShift) return false;
-          }
-          if (!corrected) break;
-        }
-        if (!this.canPlaceTank(pose)) return false;
+        if (!this.separateFromWalls(pose, tank, maxShift)) return false;
       }
       tank.x = pose.x;
       tank.y = pose.y;
@@ -484,14 +482,71 @@ export class Game {
     }
     return true;
   }
-  moveTank(tank: Tank, dx: number, dy: number): void {
-    // Subdivide long moves as well as checking both axes, so the full hull
-    // slides along walls without tunneling through them.
-    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 2));
-    for (let i = 0; i < steps; i++) {
-      if (this.canPlaceTank({ ...tank, x: tank.x + dx / steps })) tank.x += dx / steps;
-      if (this.canPlaceTank({ ...tank, y: tank.y + dy / steps })) tank.y += dy / steps;
+  private separateFromWalls(pose: Tank, origin: Readonly<Point>, maxShift: number): boolean {
+    for (let pass = 0; pass < 6; pass++) {
+      let corrected = false;
+      for (const wall of this.map.walls) {
+        const contact = tankWallContact(pose, wall);
+        if (!contact) continue;
+        pose.x += contact.nx * (contact.depth + 0.001);
+        pose.y += contact.ny * (contact.depth + 0.001);
+        corrected = true;
+        if (distance(pose, origin) > maxShift) return false;
+      }
+      if (!corrected) break;
     }
+    return this.canPlaceTank(pose);
+  }
+  moveTank(tank: Tank, dx: number, dy: number): void {
+    const length = Math.hypot(dx, dy);
+    if (!length) return;
+    const drive = dx * Math.cos(tank.angle) + dy * Math.sin(tank.angle);
+    const alongTracks = Math.abs(dx * Math.sin(tank.angle) - dy * Math.cos(tank.angle)) < 1e-7;
+    // Small steps bound contact pivots as well as preventing tunneling.
+    const steps = Math.max(1, Math.ceil(length / 0.8));
+    for (let i = 0; i < steps; i++) {
+      const sx = alongTracks ? (Math.cos(tank.angle) * drive) / steps : dx / steps;
+      const sy = alongTracks ? (Math.sin(tank.angle) * drive) / steps : dy / steps;
+      const pose = { ...tank, x: tank.x + sx, y: tank.y + sy };
+      if (this.canPlaceTank(pose)) {
+        tank.x = pose.x;
+        tank.y = pose.y;
+        continue;
+      }
+      if (alongTracks && this.pivotOnTrack(tank, pose, drive / steps)) continue;
+      if (this.canPlaceTank({ ...tank, x: tank.x + sx })) tank.x += sx;
+      if (this.canPlaceTank({ ...tank, y: tank.y + sy })) tank.y += sy;
+    }
+  }
+  private pivotOnTrack(tank: Tank, blocked: Tank, travel: number): boolean {
+    const contacts = this.map.walls.flatMap((wall) => tankWallContacts(blocked, wall));
+    const left = contacts.some((c) => c.part === 'leftTrack');
+    const right = contacts.some((c) => c.part === 'rightTrack');
+    if (left === right || contacts.some((c) => c.part === 'barrel' || c.part === 'hull'))
+      return false;
+    const contact = contacts.find((c) => c.part === (left ? 'leftTrack' : 'rightTrack'))!;
+    // One track stalls at contact; the other keeps driving. Rotate around
+    // the wall's actual surface, then validate the entire visible silhouette.
+    const turn = ((left ? -1 : 1) * travel) / TRACK_SPACING;
+    const c = Math.cos(turn),
+      s = Math.sin(turn);
+    const rx = tank.x - contact.point.x,
+      ry = tank.y - contact.point.y;
+    const pose = {
+      ...tank,
+      angle: tank.angle + turn,
+      x: contact.point.x + rx * c - ry * s,
+      y: contact.point.y + rx * s + ry * c,
+    };
+    if (
+      !this.canPlaceTank(pose) &&
+      !this.separateFromWalls(pose, { ...pose }, Math.abs(travel) * 0.5 + 0.001)
+    )
+      return false;
+    tank.x = pose.x;
+    tank.y = pose.y;
+    tank.angle = pose.angle;
+    return true;
   }
   fire(tank: Tank): boolean {
     const active = this.bullets.filter((b) => b.owner === tank.id).length;

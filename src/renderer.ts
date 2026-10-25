@@ -222,10 +222,11 @@ export class Renderer {
     for (const shape of TANK_SHAPES.slice(0, 2))
       this.roundRect(shape.x, shape.y, shape.w, shape.h, shape.r);
     ctx.fillStyle = '#718164';
-    const tread = Math.floor(tank.tread / 3) % 2;
-    for (let x = -12 + tread * 2; x < 14; x += 5) {
-      ctx.fillRect(x, -13, 1.5, 5);
-      ctx.fillRect(x, 8, 1.5, 5);
+    for (const [phase, y] of [
+      [tank.leftTread, -13],
+      [tank.rightTread, 8],
+    ]) {
+      for (let x = -12 + (((phase % 5) + 5) % 5); x < 14; x += 5) ctx.fillRect(x, y, 1.5, 5);
     }
     const hull = TANK_SHAPES[2],
       barrel = TANK_SHAPES[3];

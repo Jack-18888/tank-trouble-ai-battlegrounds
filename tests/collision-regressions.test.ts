@@ -53,6 +53,56 @@ test('a genuinely blocked muzzle does not spawn a shell inside its own tank', ()
   assert.equal(tank.cooldown, 0, 'blocked firing should not consume a shot');
 });
 
+test('a free track drives the tank around a wall endpoint in either direction', () => {
+  for (const mirror of [-1, 1]) {
+    for (const reverse of [false, true]) {
+      const game = arena(),
+        tank = game.tanks[0];
+      game.map.walls = [wall(32, 100, 100, 100)];
+      // The rounded front (or rear when reversing) of one track touches the
+      // wall cap. The other track and barrel have clear space to move.
+      const angle = mirror * ((-5 * Math.PI) / 6) + (reverse ? Math.PI : 0);
+      const localX = reverse ? -19 : 18;
+      const localY = -11.5 * mirror * (reverse ? -1 : 1);
+      Object.assign(tank, {
+        x: 100 - localX * Math.cos(angle) + localY * Math.sin(angle) + 0.002,
+        y: 100 - localX * Math.sin(angle) - localY * Math.cos(angle),
+        angle,
+      });
+      const start = { x: tank.x, y: tank.y, angle: tank.angle };
+      assert.equal(game.canPlaceTank(tank), true);
+      for (let i = 0; i < 30; i++) {
+        const previous = { x: tank.x, y: tank.y };
+        game.update(1 / 120, reverse ? { backward: true } : { forward: true });
+        assert.equal(game.canPlaceTank(tank), true, 'pivot must preserve wall clearance');
+        assert.ok(distance(tank, previous) < 1.5, 'wall contact must not teleport the tank');
+      }
+      assert.ok(distance(tank, start) > 5, 'the clear track must produce actual movement');
+      assert.ok(
+        (tank.angle - start.angle) * mirror < -0.1,
+        'the free track must turn the tank away from contact',
+      );
+      assert.notEqual(tank.leftTread, tank.rightTread, 'tracks should animate independently');
+    }
+  }
+});
+
+test('driving into two blocked tracks or a blocked barrel cannot force a pivot', () => {
+  for (const angle of [0, Math.PI]) {
+    const game = arena(),
+      tank = game.tanks[0];
+    // Forward: barrel hits first. Reverse: both tracks hit the flat wall.
+    game.map.walls = [wall(128, 40, 128, 160)];
+    Object.assign(tank, { x: angle === 0 ? 99.99 : 108.99, angle });
+    const start = { x: tank.x, y: tank.y };
+    for (let i = 0; i < 120; i++)
+      game.update(1 / 120, angle === 0 ? { forward: true } : { backward: true });
+    assert.equal(tank.angle, angle);
+    assert.ok(distance(tank, start) < 0.02);
+    assert.equal(game.canPlaceTank(tank), true);
+  }
+});
+
 test('shells hit visible track corners and the gun barrel, and miss empty space', () => {
   const tank = { x: 100, y: 100, angle: 0 };
   assert.notEqual(sweepTank(60, 87, 28, 0, tank), null, 'upper track must have a hitbox');

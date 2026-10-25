@@ -1,6 +1,14 @@
 // Shared by the renderer and physics. Coordinates are local to the tank,
 // with the barrel pointing along +x. Each shape is a rounded rectangle.
-import type { CollisionHit, Rect, RoundedRect, TankPose, Wall, WallContact } from './types.ts';
+import type {
+  CollisionHit,
+  Rect,
+  RoundedRect,
+  TankPose,
+  Wall,
+  WallContact,
+  TankWallContact,
+} from './types.ts';
 
 export const TANK_SHAPES = [
   { x: -16, y: -14, w: 31, h: 7, r: 2 },
@@ -12,6 +20,8 @@ export const BARREL_LENGTH = TANK_SHAPES[3].x + TANK_SHAPES[3].w;
 export const WALL_RADIUS = 3;
 export const SHELL_RADIUS = 2.7;
 export const TANK_BOUND_RADIUS = 26;
+export const TRACK_SPACING = 21;
+const PARTS = ['leftTrack', 'rightTrack', 'hull', 'barrel'] as const;
 const EPS = 1e-8;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const core = (s: RoundedRect): Rect => ({
@@ -218,24 +228,44 @@ export function tankWallContact(
   tank: Readonly<TankPose>,
   wall: Readonly<Wall>,
 ): WallContact | null {
-  if (!tankWall(tank, wall)) return null;
+  return tankWallContacts(tank, wall).reduce<WallContact | null>(
+    (deepest, contact) => (!deepest || contact.depth > deepest.depth ? contact : deepest),
+    null,
+  );
+}
+
+export function tankWallContacts(
+  tank: Readonly<TankPose>,
+  wall: Readonly<Wall>,
+): TankWallContact[] {
+  if (!tankWall(tank, wall)) return [];
   const [ax, ay] = localPoint(tank, wall.x1, wall.y1),
     [bx, by] = localPoint(tank, wall.x2, wall.y2);
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle);
-  let deepest: WallContact | null = null;
+  const contacts: TankWallContact[] = [];
   for (let i = 0; i < cores.length; i++) {
     const closest = closestSegmentBox(ax, ay, bx, by, cores[i]);
     const depth = WALL_RADIUS + TANK_SHAPES[i].r - closest.distance;
     // Starting from a valid pose and rotating in small increments keeps the
     // cores apart. Leave deep/ambiguous overlap to the caller to reject.
     if (depth <= EPS || closest.distance <= EPS) continue;
-    if (deepest && deepest.depth >= depth) continue;
     const nx = (closest.bodyX - closest.wallX) / closest.distance;
     const ny = (closest.bodyY - closest.wallY) / closest.distance;
-    deepest = { nx: nx * c - ny * s, ny: nx * s + ny * c, depth };
+    const [x, y] = worldPoint(
+      tank,
+      closest.wallX + nx * WALL_RADIUS,
+      closest.wallY + ny * WALL_RADIUS,
+    );
+    contacts.push({
+      nx: nx * c - ny * s,
+      ny: nx * s + ny * c,
+      depth,
+      part: PARTS[i],
+      point: { x, y },
+    });
   }
-  return deepest;
+  return contacts;
 }
 
 export function tanksOverlap(a: Readonly<TankPose>, b: Readonly<TankPose>): boolean {
