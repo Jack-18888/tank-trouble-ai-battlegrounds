@@ -3,8 +3,10 @@ import type { BotContext } from './types.ts';
 import type { PlayerDecision, PlayerProfile } from '../players/types.ts';
 import { MazeNavigator } from './navigation.ts';
 
-// Each controller owns its strategy and route memory; custom AbstractPlayer subclasses
-// can compose this strategy or provide their own decision implementation.
+/**
+ * Stateful maze pursuit with optional dodging and bank shots; create one strategy per bot.
+ * The profile needs a positive reaction interval because steering/braking predict held controls.
+ */
 export class CombatStrategy {
   private readonly navigator = new MazeNavigator();
 

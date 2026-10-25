@@ -1,3 +1,5 @@
+// Browser entry point: owns DOM events, held input, worker lifetimes, rendering, and sound.
+// Game remains DOM-free, and PlayerRuntime bridges input/worker messages to physics ticks.
 import { Game, DEFAULT_CONFIG, COLORS, NAMES, validateGameConfig } from './engine.ts';
 import { getBotType, getBotTypes, hasBot } from './bots/index.ts';
 import { Renderer, tankIcon } from './renderer.ts';
@@ -68,6 +70,7 @@ const icons = {
 };
 $('fullscreen-button').innerHTML = icons.fullscreen;
 
+/** Close the old match's transports before creating controllers for the replacement. */
 function replaceGame() {
   runtime.dispose();
   game = new Game(config);
@@ -82,6 +85,7 @@ function publishInput() {
     fire: keys.has('Space'),
   });
 }
+/** Publish releases as well as clearing UI state so a held command cannot survive focus loss. */
 function clearInput() {
   keys.clear();
   for (const button of document.querySelectorAll('[data-key].active'))
@@ -152,6 +156,7 @@ function settingsUI() {
     : `${botIds.length} BOTS. TAKE A SEAT. WATCH THE TROUBLE.`;
   persist();
 }
+/** Edit the next-match configuration; active matches keep their own validated config copy. */
 function setupChanged() {
   settingsUI();
   if (game.state === 'ready' || game.state === 'matchOver') {
@@ -382,6 +387,7 @@ $('shuffle-button').addEventListener('click', () => {
 });
 
 function openHelp() {
+  // Closing help resumes only a match that opening help paused, preserving an earlier manual pause.
   helpPaused = ['playing', 'countdown', 'roundOver'].includes(game.state);
   if (helpPaused) pause();
   $('help-dialog').showModal();
@@ -499,6 +505,7 @@ function handleEvents() {
       );
     if (event.type === 'go') {
       $('overlay').classList.add('hidden');
+      // Keep a startup failure visible instead of immediately replacing it with the round greeting.
       if (performance.now() >= controllerNoticeUntil) toast('ROLL OUT.', 1100);
     }
     if (event.type === 'pickup' && event.id === game.humanId)
@@ -519,6 +526,8 @@ function handleEvents() {
   }
 }
 function frame(time: number) {
+  // RAF timestamps are milliseconds. Limit catch-up after stalls, then simulate fixed 120 Hz ticks
+  // independently of rendering; PlayerRuntime publishes observations on its own 30 Hz cadence.
   const elapsed = Math.min((time - (previousTime || time)) / 1000, 0.1);
   previousTime = time;
   accumulator += elapsed;

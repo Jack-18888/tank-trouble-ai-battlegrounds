@@ -21,5 +21,9 @@ export abstract class AbstractPlayer {
     Object.defineProperty(this, 'profile', { writable: false, configurable: false });
   }
 
+  /**
+   * Produce desired controls without mutating the simulation. Bots may return a Promise;
+   * their connection serializes calculations and retains the previous command while waiting.
+   */
   abstract decide(context: PlayerContext): PlayerDecision | Promise<PlayerDecision>;
 }

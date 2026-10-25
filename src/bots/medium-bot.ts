@@ -2,6 +2,7 @@ import { AbstractPlayer } from '../players/abstract-player.ts';
 import { CombatStrategy } from './combat.ts';
 import type { PlayerContext, PlayerDecision } from '../players/types.ts';
 
+/** Maze pursuit with shell dodging and direct-fire aiming. */
 export class MediumBot extends AbstractPlayer {
   private readonly strategy = new CombatStrategy(this.profile, { dodge: true });
   constructor() {

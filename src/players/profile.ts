@@ -1,5 +1,6 @@
 import type { PlayerProfile } from './types.ts';
 
+/** Copy and freeze finite settings; only reaction and aim error may be zero. Invalid input throws. */
 export function validateProfile(profile: PlayerProfile): Readonly<PlayerProfile> {
   const settings: PlayerProfile = {
     speed: profile.speed,

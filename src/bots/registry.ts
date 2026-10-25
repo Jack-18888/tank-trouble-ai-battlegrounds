@@ -3,6 +3,10 @@ import type { BotConstructor, BotMetadata } from './types.ts';
 
 const types = new Map<string, { BotClass: BotConstructor; metadata: BotMetadata }>();
 
+/**
+ * Register a controller and setup metadata once per JavaScript realm.
+ * Put registrations in the shared catalog so both the page and worker load the same classes.
+ */
 export function registerBot(
   id: string,
   BotClass: BotConstructor,
@@ -40,6 +44,7 @@ export function getBotType(id: string | null | undefined): BotMetadata | undefin
 export function getBotTypes(): BotMetadata[] {
   return [...types.values()].map((type) => type.metadata);
 }
+/** Construct fresh strategy memory for one tank; unknown IDs and constructor errors propagate. */
 export function createBot(id: string): AbstractPlayer {
   const type = types.get(id);
   if (!type) throw new Error(`Unknown bot type "${id}". Register it before creating the game.`);

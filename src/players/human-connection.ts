@@ -9,6 +9,7 @@ import type {
   WorldFrame,
 } from './connection.ts';
 
+/** Publishes human input changes synchronously; world snapshots are optional for this controller. */
 export class HumanConnection implements PlayerConnection {
   private readonly player = new Player();
   private frame?: WorldFrame;

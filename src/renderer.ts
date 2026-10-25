@@ -9,10 +9,12 @@ function canvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return context;
 }
 
+/** Build UI icon markup from the game's trusted palette and class names. */
 export function tankIcon(color: string, className = ''): string {
   return `<svg class="${className}" viewBox="0 0 32 36" aria-hidden="true"><rect x="3" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="23" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="10" y="13" width="12" height="18" rx="3" fill="${color}"/><circle cx="16" cy="20" r="5" fill="${color}" stroke="#f6f5ef" stroke-width="1"/><rect x="14" y="2" width="4" height="18" rx="1" fill="${color}"/></svg>`;
 }
 
+/** Canvas presentation of Game state; drawing does not advance or mutate the simulation. */
 export class Renderer {
   readonly canvas: HTMLCanvasElement;
   readonly ctx: CanvasRenderingContext2D;
@@ -32,6 +34,7 @@ export class Renderer {
     this.observer.observe(canvas);
     this.resize();
   }
+  /** Match the CSS size with a capped device-pixel backing store and invalidate the map cache. */
   resize() {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -42,6 +45,7 @@ export class Renderer {
     this.canvas.height = Math.round(rect.height * dpr);
     this.cachedMap = null;
   }
+  /** Draw current state; time is animation time in seconds, independent of simulated match time. */
   draw(game: Game, time: number) {
     if (!this.width || !this.height) return;
     const ctx = this.ctx,
@@ -59,6 +63,7 @@ export class Renderer {
       oy = (this.height - map.height * scale) / 2;
     ctx.save();
     const shake = this.reducedMotion ? 0 : game.shake;
+    // Presentation randomness never consumes the simulation's seeded random stream.
     ctx.translate(ox + (Math.random() - 0.5) * shake, oy + (Math.random() - 0.5) * shake);
     ctx.scale(scale, scale);
     if (this.cachedMap !== map) this.cacheMap(map);
@@ -134,6 +139,7 @@ export class Renderer {
       ctx.fillText('YOU’RE OUT · WATCH THE TROUBLE', this.width / 2, this.height - 13);
     }
   }
+  /** Bake static floor/walls once per map object; round replacement changes that identity. */
   cacheMap(map: GameMap) {
     const floor = document.createElement('canvas');
     floor.width = map.width + 16;

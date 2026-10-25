@@ -1,5 +1,6 @@
 import type { Seed } from './types.ts';
 
+/** Create an independent reproducible [0,1) stream; every call advances its private state. */
 export function randomGenerator(seed: Seed): () => number {
   let value = 2166136261;
   for (const c of String(seed)) value = Math.imul(value ^ c.charCodeAt(0), 16777619);

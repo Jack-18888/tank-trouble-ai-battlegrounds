@@ -20,8 +20,10 @@ export class BotBrain {
     this.random = randomGenerator(init.seed);
   }
 
+  /** Return no decision until due, or calculate once using this frame and the bot's private RNG. */
   decide(frame: WorldFrame): PlayerDecision | undefined | Promise<PlayerDecision | undefined> {
     if (this.epoch !== frame.epoch) {
+      // Resume starts with a fresh observation instead of waiting on a pre-pause deadline.
       this.epoch = frame.epoch;
       this.nextThink = frame.match.elapsed;
     }
@@ -37,6 +39,7 @@ export class BotBrain {
       if (!decision || typeof decision !== 'object')
         throw new TypeError('Expected a movement decision object.');
       const reaction = this.player.profile.reaction;
+      // Schedule from simulation time, not Promise completion time; newer frames skip missed work.
       this.nextThink =
         frame.match.elapsed + (reaction ? reaction * (0.85 + this.random() * 0.3) : 0);
       return decision;

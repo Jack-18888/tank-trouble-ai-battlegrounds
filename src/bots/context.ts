@@ -1,6 +1,7 @@
 import type { DeepReadonly, Point } from '../types.ts';
 import type { BotContext, BotObservation, BotQueries } from './types.ts';
 
+/** Freeze the cloned observation graph in place before sharing it with controllers. */
 export function freezeTree<T>(value: T): DeepReadonly<T> {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -9,8 +10,10 @@ export function freezeTree<T>(value: T): DeepReadonly<T> {
   return value as DeepReadonly<T>;
 }
 
-// Strategies receive detached observations; query helpers use the same snapshot,
-// even if a controller keeps a reference across subsequent simulation updates.
+/**
+ * Clone/freeze observations and bind queries to that same snapshot. Retained contexts continue
+ * querying their original map and tank poses after the live game advances; random stays a stream.
+ */
 export function createBotContext(state: BotObservation, queries: BotQueries): BotContext {
   const snapshot = structuredClone(state);
   return Object.freeze({

@@ -62,6 +62,10 @@ export const DEFAULT_CONFIG: GameConfig = {
   powerups: true,
 };
 
+/**
+ * Normalize untrusted saved settings into a fresh 2–6 tank roster with at most one human.
+ * Explicit rosters take precedence over legacy opponent settings; invalid bots become Medium.
+ */
 export function validateGameConfig(value: unknown): GameConfig {
   const source: Record<string, unknown> =
     typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {};
@@ -115,6 +119,7 @@ export function validateGameConfig(value: unknown): GameConfig {
   };
 }
 
+/** Build a connected seeded maze; density adds openings after constructing a spanning tree. */
 export function generateMap(
   size: MapSize = 'classic',
   density: MazeDensity = 'balanced',
@@ -192,11 +197,17 @@ export function generateMap(
   };
 }
 
+/**
+ * Authoritative, DOM-free match state. Controllers submit commands; update() never runs AI.
+ * Positions use world pixels, dt uses seconds, and the browser runtime normally steps at 120 Hz.
+ */
 export class Game {
   events: GameEvent[] = [];
   config: GameConfig;
   rng: () => number;
+  /** Match-long round wins, indexed by roster/tank ID. */
   scores: number[];
+  /** Match-long opponent eliminations, separate from each Tank's per-round kills. */
   kills: number[];
   round = 0;
   state: GameState = 'ready';
@@ -207,6 +218,7 @@ export class Game {
   // prepareRound initializes the map before the constructor returns.
   map!: GameMap;
   tanks: Tank[] = [];
+  /** Connection status and profiles only; bot instances belong to their worker realms. */
   players = new Map<number, PlayerState>();
   generation = 0;
   epoch = 0;
@@ -238,6 +250,7 @@ export class Game {
   validateConfig(config: unknown): GameConfig {
     return validateGameConfig(config);
   }
+  /** The configured human slot, or null for spectator matches; slot zero has no special role. */
   get humanId(): number | null {
     const id = this.config.players.findIndex((slot) => slot.kind === 'human');
     return id === -1 ? null : id;
@@ -245,6 +258,7 @@ export class Game {
   emit(event: GameEvent) {
     this.events.push(event);
   }
+  /** Consume UI/audio notifications without calling browser code inside simulation updates. */
   drainEvents() {
     const events = this.events;
     this.events = [];
@@ -256,6 +270,7 @@ export class Game {
       .padStart(6, '0')
       .toUpperCase();
   }
+  /** Rebuild round entities and invalidate old controls while retaining match scores and kills. */
   prepareRound(seed?: Seed) {
     this.generation++;
     this.invalidateControls();
@@ -333,6 +348,7 @@ export class Game {
     }
     this.emit({ type: 'map' });
   }
+  /** Begin a new match, preserving the ready-state preview maze and clearing all match totals. */
   start() {
     if (this.state !== 'ready') this.prepareRound();
     this.scores.fill(0);
@@ -349,6 +365,7 @@ export class Game {
     this.lastCount = -1;
     this.emit({ type: 'state' });
   }
+  /** Toggle a pausable match state; either transition invalidates held and in-flight commands. */
   pause() {
     this.invalidateControls();
     if (this.state === 'paused') {
@@ -362,6 +379,10 @@ export class Game {
       this.emit({ type: 'state' });
     }
   }
+  /**
+   * Advance one physics step by dt seconds, clamped to [0, 0.04].
+   * Accepted commands become active at the playing-step boundary; no controller is awaited.
+   */
   update(dt: number) {
     dt = clamp(dt, 0, 0.04);
     if (dt === 0) return;
@@ -390,6 +411,7 @@ export class Game {
       }
       return;
     }
+    // All tanks consume queued controls before movement; replies cannot alter an update midway.
     this.applyPendingDecisions();
     this.tick++;
     this.elapsed += dt;
@@ -404,6 +426,7 @@ export class Game {
         oldY = tank.y,
         oldAngle = tank.angle;
       const profile = this.players.get(tank.id)?.profile;
+      // A worker may still be initializing; its tank stays present and vulnerable without moving.
       if (!profile) {
         tank.vx = 0;
         tank.vy = 0;
@@ -445,12 +468,14 @@ export class Game {
         this.finishRound(this.elapsed >= 90 && alive.length > 1 ? null : alive[0] || null);
     }
   }
+  /** Test the full visible silhouette against walls and all other living tanks. */
   canPlaceTank(tank: Readonly<Tank>): boolean {
     return (
       !this.map.walls.some((w) => tankWall(tank, w)) &&
       !this.tanks.some((t) => t.id !== tank.id && t.alive && tanksOverlap(t, tank))
     );
   }
+  /** Attempt a turn in radians with bounded wall separation; a blocked turn may progress partly. */
   turnTank(tank: Tank, angle: number): boolean {
     if (!angle) return true;
     const steps = Math.ceil(Math.abs(angle) / 0.04);
@@ -485,6 +510,7 @@ export class Game {
     }
     return this.canPlaceTank(pose);
   }
+  /** Move by world-pixel deltas, allowing collision-safe sliding and free-track contact pivots. */
   moveTank(tank: Tank, dx: number, dy: number): void {
     const length = Math.hypot(dx, dy);
     if (!length) return;
@@ -536,6 +562,7 @@ export class Game {
     tank.angle = pose.angle;
     return true;
   }
+  /** Try one volley, respecting profile availability, muzzle clearance, cooldown, and shell limits. */
   fire(tank: Tank): boolean {
     const active = this.bullets.filter((b) => b.owner === tank.id).length;
     if (tank.cooldown > 0 || active >= 5 || !tank.alive) return false;
@@ -567,6 +594,7 @@ export class Game {
     this.emit({ type: 'fire', ...{ id: tank.id } });
     return true;
   }
+  /** Sweep each shell over dt seconds, resolving hits and the remaining travel after ricochets. */
   updateBullets(dt: number) {
     for (const shell of this.bullets) {
       shell.age += dt;
@@ -625,6 +653,10 @@ export class Game {
     }
     this.bullets = this.bullets.filter((b) => !b.dead);
   }
+  /**
+   * Eliminate a living tank once. Opponent kills credit the shell owner even after its death;
+   * self-hits and unknown owners earn no kills, and round wins are awarded separately.
+   */
   destroyTank(tank: Tank, owner: number) {
     if (!tank.alive) return;
     this.playerClosed(tank.id);
@@ -639,6 +671,7 @@ export class Game {
     this.emit({ type: 'destroy', ...{ id: tank.id, owner } });
     this.emit({ type: 'score' });
   }
+  /** Award one survival win, or a draw for null, and choose round-over versus match-over state. */
   finishRound(winner: Tank | null) {
     this.invalidateControls();
     if (winner) this.scores[winner.id]++;
@@ -669,6 +702,7 @@ export class Game {
   controlStamp(): ControlStamp {
     return { generation: this.generation, round: this.round, epoch: this.epoch, tick: this.tick };
   }
+  /** Copy completed dynamic state for transport; exclude visual trails and static map/rules. */
   snapshot(): WorldFrame {
     return structuredClone({
       ...this.controlStamp(),
@@ -694,6 +728,7 @@ export class Game {
       },
     });
   }
+  /** Build a detached query context for tools/tests without running a bot or using physics RNG. */
   getBotContext(tank: Tank): BotContext {
     let random = this.observationRandom.get(tank.id);
     if (!random) {
@@ -714,6 +749,7 @@ export class Game {
       random,
     );
   }
+  /** Validate a connection profile; failed or closed slots cannot be revived in place. */
   playerReady(id: number, profile: Readonly<PlayerProfile>) {
     const state = this.players.get(id);
     if (!state || state.status === 'failed' || state.status === 'closed') return;
@@ -721,6 +757,7 @@ export class Game {
     state.status = 'ready';
     this.emit({ type: 'playerStatus', id, status: 'ready' });
   }
+  /** Stop controls and report failure once while leaving the tank alive in the match. */
   playerFailed(id: number, reason: string) {
     const state = this.players.get(id);
     if (!state || state.status === 'failed' || state.status === 'closed') return;
@@ -734,6 +771,10 @@ export class Game {
     if (state && state.status !== 'failed') state.status = 'closed';
     this.clearPlayerControls(id);
   }
+  /**
+   * Queue sanitized controls from a current living connection; return false for stale ordering,
+   * future observation ticks, or invalid lifecycle stamps. Acceptance does not move the tank.
+   */
   submitDecision(id: number, envelope: DecisionEnvelope): boolean {
     const state = this.players.get(id);
     if (
@@ -793,6 +834,7 @@ export class Game {
       tank.fire = false;
     }
   }
+  /** An epoch change rejects late replies even when the round's worker instance is retained. */
   private invalidateControls() {
     this.epoch++;
     this.pendingDecisions.clear();

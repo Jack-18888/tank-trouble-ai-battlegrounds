@@ -3,7 +3,10 @@ import { stampOf } from './connection.ts';
 import type { AbstractPlayer } from './abstract-player.ts';
 import type { WorkerRequest, WorkerReply } from './connection.ts';
 
-/** Shared entrypoint for production workers and importable QA catalogs. */
+/**
+ * Serve the worker protocol using the local catalog, with an injectable catalog for QA.
+ * Constructors and queries stay in this realm; only serializable data crosses the transport.
+ */
 export function serveBotWorker(
   listen: (handler: (message: WorkerRequest) => void) => void,
   send: (reply: WorkerReply) => void,
@@ -28,6 +31,7 @@ export function serveBotWorker(
           if (!brain || busy) throw new Error('Invalid worker observation order.');
           busy = true;
           const decision = await brain.decide(message.frame);
+          // Acknowledgments carry the last decision sequence even when no new controls are due.
           if (decision) sequence++;
           send({
             type: 'result',

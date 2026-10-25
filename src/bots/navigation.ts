@@ -11,6 +11,7 @@ export class MazeNavigator {
   private goal = -1;
   private mapSeed = '';
 
+  /** Next cell-center waypoint in world pixels, retaining route progress until the goal changes. */
   waypoint(context: BotContext, target: Readonly<Point>): Point {
     const { self, map, rules } = context;
     const from = context.cellAt(self.x, self.y);

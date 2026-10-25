@@ -30,6 +30,8 @@ const core = (s: RoundedRect): Rect => ({
   w: s.w - 2 * s.r,
   h: s.h - 2 * s.r,
 });
+// A rounded rectangle is its inset rectangular core expanded by the corner radius.
+// Collision tests add object radii to these cores, matching the shapes drawn by Renderer.
 const cores = TANK_SHAPES.map(core);
 
 function pointSegmentDistanceSq(
@@ -57,6 +59,7 @@ function corners(box: Rect): [number, number][] {
   ];
 }
 
+/** Slab intersection over a displacement; inside=true also reports an initial overlap at t=0. */
 function sweepBox(
   x: number,
   y: number,
@@ -91,6 +94,7 @@ function sweepBox(
   }
   return enter <= leave && enter >= -EPS && enter <= 1 ? { t: Math.max(0, enter), nx, ny } : null;
 }
+/** Circle entry test; inside=true also recognizes an initial overlap at t=0. */
 function sweepCircle(
   x: number,
   y: number,
@@ -122,7 +126,7 @@ function earliest(hits: (CollisionHit | null)[]): CollisionHit | null {
     .reduce<CollisionHit | null>((best, hit) => (!best || hit.t < best.t ? hit : best), null);
 }
 
-// A rendered wall is a capsule: a line segment with round end caps.
+/** Sweep a circle along (dx,dy) against a capsule-shaped wall; t is a fraction of that movement. */
 export function sweepWall(
   x: number,
   y: number,
@@ -207,6 +211,7 @@ function worldPoint(tank: Readonly<TankPose>, x: number, y: number): [number, nu
   return [tank.x + x * c - y * s, tank.y + x * s + y * c];
 }
 
+/** Test overlap against each rounded track, hull, and barrel after a broad bounding-radius check. */
 export function tankWall(tank: Readonly<TankPose>, wall: Readonly<Wall>): boolean {
   if (
     pointSegmentDistanceSq(tank.x, tank.y, wall.x1, wall.y1, wall.x2, wall.y2) >
@@ -221,9 +226,7 @@ export function tankWall(tank: Readonly<TankPose>, wall: Readonly<Wall>): boolea
   );
 }
 
-// Small rotations can sweep a track corner or barrel into a wall even though
-// the starting pose is clear. Return the exact separation needed for that
-// contact; the simulation limits and validates any resulting displacement.
+/** Deepest resolvable contact for a small rotation; the caller must bound and validate separation. */
 export function tankWallContact(
   tank: Readonly<TankPose>,
   wall: Readonly<Wall>,
@@ -234,6 +237,7 @@ export function tankWallContact(
   );
 }
 
+/** Return shallow per-part contacts with world-space normals and wall-surface pivot points. */
 export function tankWallContacts(
   tank: Readonly<TankPose>,
   wall: Readonly<Wall>,
@@ -268,6 +272,7 @@ export function tankWallContacts(
   return contacts;
 }
 
+/** Test the two rotated, multi-part rounded silhouettes; empty space beside the barrel is clear. */
 export function tanksOverlap(a: Readonly<TankPose>, b: Readonly<TankPose>): boolean {
   if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 >= (TANK_BOUND_RADIUS * 2) ** 2) return false;
   for (let i = 0; i < cores.length; i++) {
@@ -293,7 +298,7 @@ export function tanksOverlap(a: Readonly<TankPose>, b: Readonly<TankPose>): bool
   return false;
 }
 
-// Sweep a shell against the same rounded tracks, hull, and barrel we draw.
+/** Sweep a shell against the rendered tank parts; return first contact in [0,1], or null. */
 export function sweepTank(
   x: number,
   y: number,
@@ -321,6 +326,7 @@ export function sweepTank(
   return first;
 }
 
+/** Shell-center position just beyond the barrel, including shell radius and a clearance epsilon. */
 export function muzzlePosition(
   tank: Readonly<TankPose>,
   angle = tank.angle,

@@ -10,7 +10,11 @@ import type {
   RoundInit,
 } from './connection.ts';
 
-/** Owns player lifetimes and observation delivery; the game only executes accepted controls. */
+/**
+ * Owns controller lifetimes, input delivery, and 30 Hz completed-tick observations.
+ * Advance it with the game's fixed timestep and dispose it before replacing the Game.
+ * The explicit factory selects browser workers or deterministic headless connections.
+ */
 export class PlayerRuntime {
   readonly connections = new Map<number, PlayerConnection>();
   private readonly tokens = new Map<number, { active: boolean }>();
@@ -31,9 +35,11 @@ export class PlayerRuntime {
     this.physicsStep = game.update.bind(game);
     this.lastWall = now();
   }
+  /** Reconcile round/state transitions immediately; step() also calls this automatically. */
   sync() {
     if (this.disposed) return;
     const game = this.game;
+    // Setup previews can replace the Game repeatedly without allocating any workers.
     if (game.state === 'ready') return;
     const roundKey = `${game.generation}:${game.round}`;
     if (roundKey !== this.roundKey) {
@@ -43,6 +49,7 @@ export class PlayerRuntime {
       this.lastWall = this.now();
       for (const tank of game.tanks) {
         if (!tank.alive) continue;
+        // Stamps protect round commands; this token also disables callbacks from disposed runtimes.
         const token = { active: true };
         this.tokens.set(tank.id, token);
         const init: RoundInit = {
@@ -95,6 +102,7 @@ export class PlayerRuntime {
     if (this.epoch !== game.epoch || this.state !== game.state) {
       for (const connection of this.connections.values()) connection.invalidate();
       this.nextObservation = game.elapsed;
+      // Reset the sampling origin so paused wall time cannot count toward a worker timeout.
       this.lastWall = this.now();
       if (game.state === 'paused' || this.state === 'paused') this.input = {};
       this.epoch = game.epoch;
@@ -110,6 +118,7 @@ export class PlayerRuntime {
       }
     }
   }
+  /** Cache human input, publishing immediately while playing or when countdown enters play. */
   setInput(input: Readonly<PlayerInput>) {
     if (this.disposed) return;
     this.sync();
@@ -121,6 +130,10 @@ export class PlayerRuntime {
     if (game.state !== 'playing' || game.humanId === null) return;
     this.connections.get(game.humanId)?.setInput?.(this.input, game.controlStamp());
   }
+  /**
+   * Advance physics by dt seconds, then offer one shared snapshot when the 30 Hz deadline is due.
+   * Worker watchdogs use actual elapsed milliseconds even if several steps run in one frame.
+   */
   step(dt: number) {
     if (this.disposed) return;
     this.sync();
@@ -134,6 +147,7 @@ export class PlayerRuntime {
     this.sync();
     const game = this.game;
     if (game.state !== 'playing' || game.elapsed + 1e-9 < this.nextObservation) return;
+    // Skip missed publication slots rather than queuing a catch-up burst for slow controllers.
     this.nextObservation = game.elapsed + 1 / 30;
     const frame = game.snapshot();
     freezeTree(frame);
@@ -148,6 +162,7 @@ export class PlayerRuntime {
     this.connections.clear();
     this.tokens.clear();
   }
+  /** Permanently close all connections and clear their accepted and pending controls. */
   dispose() {
     if (this.disposed) return;
     this.disposed = true;

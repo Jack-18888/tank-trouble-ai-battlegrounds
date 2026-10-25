@@ -9,13 +9,17 @@ import type {
 } from './connection.ts';
 import type { PlayerProfile } from './types.ts';
 
+/** Minimal worker I/O surface; fake ports let tests control reply ordering and failures. */
 export interface WorkerPort {
   listen(message: (data: unknown) => void, failure: (reason: string) => void): void;
   post(message: WorkerRequest): void;
   terminate(): void;
 }
 
-/** One outstanding operation and one replaceable snapshot; never an unbounded message queue. */
+/**
+ * Main-thread worker transport with one outstanding operation and one replaceable snapshot.
+ * A missing reply fails only this connection after ten unpaused wall-clock seconds.
+ */
 export class WorkerConnection implements PlayerConnection {
   private phase: 'starting' | 'idle' | 'busy' | 'closed' = 'starting';
   private pending?: WorldFrame;
@@ -40,6 +44,7 @@ export class WorkerConnection implements PlayerConnection {
   }
   observe(frame: WorldFrame) {
     if (this.phase === 'closed') return;
+    // Overwrite the unsent frame while busy; never post every intermediate state to the worker.
     this.pending = frame;
     this.pump();
   }
@@ -94,6 +99,8 @@ export class WorkerConnection implements PlayerConnection {
         !Number.isSafeInteger(data.sequence)
       )
         throw new Error('Malformed bot result.');
+      // An invalidated request must still be acknowledged to unblock the transport.
+      // Game.submitDecision separately rejects commands from an obsolete pause/round epoch.
       const expected = stampOf(this.requested);
       for (const key of ['generation', 'round', 'epoch', 'tick'] as const) {
         if (!(key in data.stamp) || data.stamp[key as keyof typeof data.stamp] !== expected[key])
@@ -123,6 +130,7 @@ export class WorkerConnection implements PlayerConnection {
     this.waitingMs += Math.max(0, unpausedMilliseconds);
     if (this.waitingMs >= 10_000) this.fail('Bot did not reply within 10 seconds.');
   }
+  /** Keep the in-flight request so its eventual reply can be matched, but drop unsent state. */
   invalidate() {
     this.pending = undefined;
   }

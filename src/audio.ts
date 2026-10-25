@@ -6,6 +6,7 @@ declare global {
   }
 }
 
+/** Optional synthesized audio driven by drained game events, separate from simulation state. */
 export class Sound {
   enabled: boolean;
   lastBounce = 0;
@@ -14,6 +15,7 @@ export class Sound {
     this.enabled = enabled;
     this.lastBounce = 0;
   }
+  /** Call from a user gesture to create/resume browser audio; unavailable audio is harmless. */
   unlock() {
     if (!this.enabled) return;
     try {
@@ -23,6 +25,7 @@ export class Sound {
       /* Sound is optional. */
     }
   }
+  /** Schedule one envelope; frequencies use hertz, duration/delay seconds, and volume linear gain. */
   tone(
     frequency: number,
     duration: number,
@@ -45,6 +48,7 @@ export class Sound {
     osc.start(start);
     osc.stop(start + duration);
   }
+  /** Emphasize the configured human's shots; null gives neutral spectator audio. */
   play(event: GameEvent, humanId: number | null) {
     const type = event.type;
     if (type === 'fire') this.tone(170, 0.075, event.id === humanId ? 0.045 : 0.018, 'square', 60);

@@ -4,7 +4,11 @@ import type { ConnectionEvents, PlayerConnection, RoundInit, WorldFrame } from '
 import type { AbstractPlayer } from './abstract-player.ts';
 import type { PlayerDecision } from './types.ts';
 
-/** Explicit test/headless adapter. Browser matches never select this connection. */
+/**
+ * Explicit test/headless adapter using the same scheduler and bounded queue as bot workers.
+ * It serializes Promise decisions but shares the caller's thread, so CPU-heavy work blocks it.
+ * Browser matches always select the dedicated worker connection.
+ */
 export class InProcessConnection implements PlayerConnection {
   readonly brain: BotBrain;
   private sequence = 0;

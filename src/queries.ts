@@ -10,18 +10,21 @@ import type {
   ShotPrediction,
 } from './types.ts';
 
+/** Convert world-pixel coordinates to a row-major cell ID, clamping positions at map edges. */
 export function cellAt(map: ReadonlyGameMap, x: number, y: number): number {
   return (
     clamp(Math.floor(y / CELL), 0, map.rows - 1) * map.cols +
     clamp(Math.floor(x / CELL), 0, map.cols - 1)
   );
 }
+/** Reachable adjacent cells in north/east/south/west order; id must name a valid map cell. */
 export function neighbors(map: ReadonlyGameMap, id: number): number[] {
   const c = map.cells[id];
   return [id - map.cols, id + 1, id + map.cols, id - 1].filter(
     (next, i) => !c.walls[i] && next >= 0 && next < map.cells.length,
   );
 }
+/** Shortest unweighted cell route, including both endpoints, or [] when no route exists. */
 export function findPath(map: ReadonlyGameMap, start: number, end: number): number[] {
   if (start === end) return [start];
   const previous = new Int32Array(map.cells.length).fill(-1);
@@ -42,6 +45,7 @@ export function findPath(map: ReadonlyGameMap, start: number, end: number): numb
   return [];
 }
 
+/** Earliest wall hit along a world-pixel displacement, expanded by the moving object's radius. */
 export function firstWall(
   map: Pick<ReadonlyGameMap, 'walls'>,
   x: number,
@@ -58,6 +62,7 @@ export function firstWall(
   return result;
 }
 
+/** Test visibility with the bots' five-pixel clearance radius, rather than a zero-width ray. */
 export function lineOfSight(
   from: Readonly<Point>,
   to: Readonly<Point>,
@@ -65,6 +70,11 @@ export function lineOfSight(
 ): boolean {
   return !firstWall(map, from.x, from.y, to.x - from.x, to.y - from.y, 5);
 }
+/**
+ * Trace a shot against frozen tank poses using the simulation's muzzle and collision geometry.
+ * maxBounces=0 allows direct hits only; later ricochets may hit the shooter. Distance is total
+ * world-pixel travel, bounded by shell speed and lifetime; no moving-target extrapolation occurs.
+ */
 export function predictShot(
   tank: Readonly<ShotTank>,
   angle: number,

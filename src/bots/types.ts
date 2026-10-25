@@ -13,6 +13,7 @@ import type {
   WinTarget,
 } from '../types.ts';
 import type { AbstractPlayer } from '../players/abstract-player.ts';
+/** Serializable world data; cell indices differ from pixel coordinates used by tanks and shells. */
 export interface BotObservation {
   self: Tank;
   tanks: Tank[];
@@ -36,11 +37,14 @@ export interface BotObservation {
     maxShells: number;
   };
 }
+/** Local, frozen strategy view. Query functions exist only in the controller's execution realm. */
 export interface BotContext extends DeepReadonly<BotObservation> {
+  /** Advance this bot's seeded stream, independently of physics and other players. */
   readonly random: () => number;
   readonly cellAt: (x: number, y: number) => number;
   readonly findPath: (start: number, goal: number) => number[];
   readonly lineOfSight: (from: Readonly<Point>, to: Readonly<Point>) => boolean;
+  /** First predicted living target, possibly self after a ricochet, against the snapshot's poses. */
   readonly predictShot: (angle: number, maxBounces?: number) => ShotPrediction | null;
 }
 export interface BotQueries {
