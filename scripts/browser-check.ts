@@ -212,6 +212,8 @@ try {
   await cdp('Page.reload');
   await delay(500);
   assert.equal(await evaluate(`document.querySelectorAll('.score-card').length`), 3);
+  assert.equal(await evaluate(`document.querySelectorAll('[data-score="kills"]').length`), 3);
+  assert.equal(await evaluate(`document.querySelectorAll('[data-score="wins"]').length`), 3);
   assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
   assert.equal(
     await evaluate(
@@ -452,6 +454,32 @@ try {
   await evaluate(`document.querySelector('#difficulty [data-value="medium"]').click()`);
   if (!preview) {
     await evaluate(
+      `(async()=>{const module=await import('/tests/fixtures/browser.ts'); window.__scoreQA=module.startScoreboardFixture();})()`,
+    );
+    const readKillTotals = () =>
+      evaluate<string[]>(
+        `Array.from(document.querySelectorAll('#kills-qa [data-score="kills"]')).map(node=>node.textContent)`,
+      );
+    const readWinTotals = () =>
+      evaluate<string[]>(
+        `Array.from(document.querySelectorAll('#kills-qa [data-score="wins"]')).map(node=>node.textContent)`,
+      );
+    assert.deepEqual(await readKillTotals(), ['1', '0', '2', '0', '0', '0']);
+    assert.deepEqual(await readWinTotals(), ['1', '0', '1', '0', '0', '0']);
+    await screenshot('kills-desktop');
+    await size(390, 844, true);
+    await delay(100);
+    assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+    await screenshot('kills-mobile');
+    await evaluate('window.__scoreQA.nextRound()');
+    assert.deepEqual(await readKillTotals(), ['1', '0', '2', '0', '0', '0']);
+    assert.deepEqual(await readWinTotals(), ['1', '0', '1', '0', '0', '0']);
+    await evaluate('window.__scoreQA.restart()');
+    assert.deepEqual(await readKillTotals(), ['0', '0', '0', '0', '0', '0']);
+    assert.deepEqual(await readWinTotals(), ['0', '0', '0', '0', '0', '0']);
+    await evaluate('window.__scoreQA.dispose()');
+    await size(1440, 1100);
+    await evaluate(
       `(async()=>{const module=await import('/tests/fixtures/browser.ts'); window.__workerQA=module.startWorkerFixture();})()`,
     );
     await evaluate('window.__workerQA.waitForStart()');
@@ -617,6 +645,7 @@ try {
           '2–6 tanks and at most one human',
           'difficulty presets',
           'individual controllers and human slot swaps',
+          'per-player round wins and match kill totals',
           'bot-only matches and spectator controls',
           'settings apply to the next match',
           'legacy preference migration',

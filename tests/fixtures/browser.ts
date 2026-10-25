@@ -3,6 +3,52 @@ import { Game } from '../../src/engine.ts';
 import { Renderer } from '../../src/renderer.ts';
 import { PlayerRuntime } from '../../src/players/runtime.ts';
 import { WorkerConnection } from '../../src/players/worker-connection.ts';
+import { scoreCards } from '../../src/scoreboard.ts';
+
+export function startScoreboardFixture() {
+  const game = new Game(
+    {
+      players: Array.from({ length: 6 }, (_, id) =>
+        id === 2 ? { kind: 'human' } : { kind: 'bot', botId: 'medium' },
+      ),
+    },
+    'kill-display',
+  );
+  game.start();
+  game.destroyTank(game.tanks[1], 0);
+  game.destroyTank(game.tanks[3], 2);
+  game.finishRound(game.tanks[0]);
+  game.prepareRound('score-round-two');
+  game.destroyTank(game.tanks[4], 2);
+  game.finishRound(game.tanks[2]);
+  const site = document.querySelector<HTMLElement>('.site-wrap');
+  if (site) site.style.display = 'none';
+  const wrap = document.createElement('main');
+  wrap.className = 'site-wrap';
+  wrap.style.cssText = 'padding:32px;max-width:1100px;margin:auto';
+  wrap.innerHTML =
+    '<h1 style="font-size:36px;margin-bottom:12px">Wins and kills. Every tank counted.</h1><p style="margin-bottom:24px">Match totals stay visible for every player and carry over to the next maze.</p><div class="arena-shell"><div class="scoreboard many" id="kills-qa"></div></div>';
+  document.body.append(wrap);
+  const board = wrap.querySelector<HTMLElement>('#kills-qa')!;
+  const render = () => {
+    board.innerHTML = scoreCards(game);
+  };
+  render();
+  return {
+    nextRound() {
+      game.prepareRound('score-round-three');
+      render();
+    },
+    restart() {
+      game.start();
+      render();
+    },
+    dispose() {
+      wrap.remove();
+      if (site) site.style.display = '';
+    },
+  };
+}
 
 /** Loaded only by browser QA; these fixtures never enter the production bundle. */
 export function startWorkerFixture() {

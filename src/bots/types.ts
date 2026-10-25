@@ -20,7 +20,14 @@ export interface BotObservation {
   bullets: BulletObservation[];
   powerups: Powerup[];
   map: GameMap;
-  match: { round: number; elapsed: number; scores: number[]; target: WinTarget; state: GameState };
+  match: {
+    round: number;
+    elapsed: number;
+    scores: number[];
+    kills: number[];
+    target: WinTarget;
+    state: GameState;
+  };
   rules: {
     cellSize: number;
     playerSpeed: number;

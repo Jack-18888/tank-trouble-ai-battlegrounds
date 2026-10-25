@@ -63,6 +63,7 @@ Touchscreens get a direction pad and a fire button when a human is playing. Cont
 - Shells travel about 23% faster than the player tank, leaving room to dodge.
 - Tracks, hulls, and barrels use their rendered, rotated shapes for collisions. Shells start beyond the muzzle; a blocked muzzle does not fire a shell back inside the tank.
 - Turning against a wall gently makes room for the tank to pivot. Gaps that cannot fit the tank and contact with other tanks still block movement.
+- Per-player round wins and match-long kill totals, visible for humans and bots. Kills carry over between rounds and reset for a new match; self-inflicted ricochets do not earn a kill.
 - Sound effects, saved match preferences, round scoring, and match results.
 
 Match play runs locally, and preferences use browser local storage. There are no accounts, servers, telemetry, or multiplayer connections in the game itself. Google Fonts is optional; local fallback fonts keep the game playable offline.
@@ -73,6 +74,7 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, queued player command application, swept projectile collisions, power-ups, and match state.
 - `src/players/`: shared abstract player contract, runtime, human/worker connections, bounded messaging, per-bot scheduling, profiles, and roster controller swaps.
 - `src/bots/`: Easy/Medium/Hard subclasses, shared combat strategy, and the registry used by the game and setup UI.
+- `src/scoreboard.ts`: live round-win and cumulative kill displays for every tank.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
 - `src/queries.ts`, `src/rules.ts`, `src/random.ts`: DOM-free pathfinding, visibility, shot prediction, rules, and seeded randomness shared with workers.
 - `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.

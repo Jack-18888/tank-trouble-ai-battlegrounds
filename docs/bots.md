@@ -100,7 +100,7 @@ The last decision remains active until the next call. Every bot receives its own
 | `bullets`  | Shell positions, velocities, owners, remaining lifetime, age, and bounce count                                    |
 | `powerups` | Available pickup types, positions, and lifetimes                                                                  |
 | `map`      | Dimensions, cell coordinates and adjacency walls, collision wall segments, and seed                               |
-| `match`    | State, round number, elapsed round seconds, scores, and win target                                                |
+| `match`    | State, round number, elapsed round seconds, round-win scores, match-long kill totals, and win target              |
 | `rules`    | `cellSize`, `playerSpeed`, `shellSpeed`, `shellLifetime`, and `maxShells`                                         |
 
 Positions and velocities use world pixels and pixels per second. Angles use radians; zero faces right and positive rotation turns clockwise. Each cell's `walls` array is ordered north, east, south, west; `true` means blocked. `self.stuck` is a short-lived movement sensor, reset periodically after about 1.5 seconds of blockage.
@@ -157,3 +157,5 @@ runtime.step(1 / 120);
 ```
 
 The adapter supports deterministic fixed-input tests and asynchronous strategy tests. It does not provide CPU isolation; browser matches always use the worker factory. Seeded maps and fixed-command physics are reproducible, while live worker arrival timing can vary. Exact match recording/replay is not included.
+
+Match statistics expose `game.scores` (round wins) and `game.kills` (opponent eliminations across all rounds). Both reset when a new match starts. Observations provide the same match totals as `context.match.scores` and `context.match.kills`; `context.self.kills` remains the current round’s count. Eliminated players can still earn credit from their remaining shells, while shield hits and self-inflicted ricochets do not add kills.

@@ -355,8 +355,31 @@ h1 em {
 
 .score-number {
   font: 700 29px/1 var(--display);
+}
+
+.score-total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   margin-left: auto;
   padding-left: 4px;
+}
+
+.score-caption,
+.score-kills > span {
+  font: 6px/1 var(--mono);
+  letter-spacing: 0.5px;
+  color: #788466;
+}
+
+.score-kills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font: 700 10px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .score-card.eliminated .score-tank {

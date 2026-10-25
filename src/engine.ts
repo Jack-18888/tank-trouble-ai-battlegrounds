@@ -197,6 +197,7 @@ export class Game {
   config: GameConfig;
   rng: () => number;
   scores: number[];
+  kills: number[];
   round = 0;
   state: GameState = 'ready';
   resumeState: GameState = 'playing';
@@ -226,6 +227,7 @@ export class Game {
     this.config = this.validateConfig(config);
     this.rng = randomGenerator(seed ?? Date.now());
     this.scores = Array(this.config.players.length).fill(0);
+    this.kills = Array(this.config.players.length).fill(0);
     this.round = 0;
     this.state = 'ready';
     this.particles = [];
@@ -334,6 +336,8 @@ export class Game {
   start() {
     if (this.state !== 'ready') this.prepareRound();
     this.scores.fill(0);
+    this.kills.fill(0);
+    for (const tank of this.tanks) tank.kills = 0;
     this.round = 1;
     this.beginCountdown();
     this.emit({ type: 'score' });
@@ -622,9 +626,13 @@ export class Game {
     this.bullets = this.bullets.filter((b) => !b.dead);
   }
   destroyTank(tank: Tank, owner: number) {
+    if (!tank.alive) return;
     this.playerClosed(tank.id);
     tank.alive = false;
-    if (owner !== tank.id && this.tanks[owner]) this.tanks[owner].kills++;
+    if (owner !== tank.id && this.tanks[owner]) {
+      this.tanks[owner].kills++;
+      this.kills[owner]++;
+    }
     this.burst(tank.x, tank.y, tank.color, 28, 125, 0.8);
     this.burst(tank.x, tank.y, '#f4d384', 16, 150, 0.6);
     this.shake = 5;
@@ -680,6 +688,7 @@ export class Game {
         round: this.round,
         elapsed: this.elapsed,
         scores: this.scores,
+        kills: this.kills,
         target: this.config.target,
         state: this.state,
       },

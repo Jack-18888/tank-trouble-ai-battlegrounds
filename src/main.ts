@@ -4,6 +4,7 @@ import { Renderer, tankIcon } from './renderer.ts';
 import { Sound } from './audio.ts';
 import { assignController, PlayerRuntime } from './players/index.ts';
 import { browserBotConnection } from './players/browser-connection.ts';
+import { scoreCards } from './scoreboard.ts';
 
 interface Controls {
   arena: HTMLCanvasElement;
@@ -102,12 +103,7 @@ function soundUI() {
 }
 function scoreboard() {
   $('scoreboard').classList.toggle('many', game.tanks.length > 4);
-  $('scoreboard').innerHTML = game.tanks
-    .map(
-      (t) =>
-        `<div class="score-card ${t.alive ? '' : 'eliminated'}" data-tank="${t.id}" data-controller-status="${game.players.get(t.id)?.status}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === game.humanId ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.controller.kind === 'human' ? 'THE HUMAN' : escapeHTML(getBotType(t.controller.botId)?.label ?? t.controller.botId) + ' BOT' + (game.players.get(t.id)?.status === 'failed' ? ' · OFFLINE' : '')}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
-    )
-    .join('');
+  $('scoreboard').innerHTML = scoreCards(game);
 }
 function settingsUI() {
   $('difficulty').replaceChildren(

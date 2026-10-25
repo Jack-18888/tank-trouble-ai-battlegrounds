@@ -205,8 +205,10 @@ test('shield absorbs exactly one hit and the next hit eliminates the tank', () =
   shot();
   assert.equal(tank.alive, true);
   assert.equal(tank.shield, false);
+  assert.deepEqual(game.kills, [0, 0], 'a shield hit is not a kill');
   shot();
   assert.equal(tank.alive, false);
+  assert.deepEqual(game.kills, [0, 1], 'an actual shell elimination credits its owner');
 });
 test('five-shell limit, power-up expiry, and paused simulation behave correctly', () => {
   const game = emptyArena(),
@@ -244,6 +246,46 @@ test('rounds award scores, finish matches, and handle draws', () => {
   draw.finishRound(null);
   assert.deepEqual(draw.scores, [0, 0]);
   assert.equal(draw.state, 'roundOver');
+});
+
+test('match kills persist across rounds, stay separate from wins, and reset for a new match', () => {
+  const game = createTestGame({}, 'match-kills');
+  game.start();
+  game.destroyTank(game.tanks[1], 0);
+  game.finishRound(game.tanks[0]);
+  assert.deepEqual(game.scores, [1, 0, 0]);
+  assert.deepEqual(game.kills, [1, 0, 0]);
+  game.prepareRound('next-maze');
+  assert.deepEqual(game.kills, [1, 0, 0]);
+  assert.equal(game.tanks[0].kills, 0, 'per-round kills reset with the tanks');
+  game.destroyTank(game.tanks[2], 0);
+  assert.equal(game.tanks[0].kills, 1);
+  assert.deepEqual(game.kills, [2, 0, 0]);
+  assert.deepEqual(game.scores, [1, 0, 0], 'kills do not add round wins');
+  const context = game.getBotContext(game.tanks[0]);
+  assert.deepEqual(context.match.kills, [2, 0, 0]);
+  assert.throws(() => {
+    // @ts-expect-error Match kill totals are immutable observations.
+    context.match.kills[0] = 99;
+  }, TypeError);
+  game.start();
+  assert.deepEqual(game.kills, [0, 0, 0]);
+  assert.deepEqual(game.scores, [0, 0, 0]);
+  assert.ok(game.tanks.every((tank) => tank.kills === 0));
+  assert.deepEqual(context.match.kills, [2, 0, 0], 'retained snapshots remain detached');
+});
+
+test('kill credit excludes suicides and unknown owners, allows posthumous hits, and counts each victim once', () => {
+  const game = createTestGame({}, 'kill-credit');
+  game.destroyTank(game.tanks[0], 0);
+  assert.deepEqual(game.kills, [0, 0, 0]);
+  game.destroyTank(game.tanks[1], 0);
+  assert.deepEqual(game.kills, [1, 0, 0], 'an eliminated owner can still earn a kill');
+  game.destroyTank(game.tanks[1], 2);
+  assert.deepEqual(game.kills, [1, 0, 0], 'the same victim cannot award another kill');
+  game.destroyTank(game.tanks[2], -1);
+  assert.deepEqual(game.kills, [1, 0, 0]);
+  assert.equal(game.drainEvents().filter((event) => event.type === 'destroy').length, 3);
 });
 for (const difficulty of ['easy', 'medium', 'hard'])
   test(`${difficulty} bots navigate a maze and engage enemies`, () => {
