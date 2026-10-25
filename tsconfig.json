@@ -13,6 +13,6 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules", ".qa", ".sites-runtime"]
+  "include": ["src/**/*.ts", "tests/fixtures/browser.ts"],
+  "exclude": ["dist", "node_modules", ".qa", ".sites-runtime", "src/players/bot.worker.ts"]
 }

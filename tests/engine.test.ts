@@ -1,7 +1,7 @@
+import { createTestGame } from './helpers/game.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  Game,
   generateMap,
   neighbors,
   findPath,
@@ -39,7 +39,7 @@ test('untyped saved settings are validated before entering the typed simulation'
     density: 'balanced',
     powerups: false,
   });
-  const game = new Game(config, 'validated-settings');
+  const game = createTestGame(config, 'validated-settings');
   assert.equal(game.players.size, 6);
 });
 
@@ -77,7 +77,7 @@ test('map seeds are reproducible and maze density changes the layout', () => {
   assert.deepEqual(map, generateMap('classic', 'balanced', map.seed));
 });
 test('starting a match uses the maze shown in the setup preview', () => {
-  const game = new Game({}, 'preview');
+  const game = createTestGame({}, 'preview');
   const map = game.map,
     positions = game.tanks.map((t) => [t.x, t.y]);
   game.start();
@@ -89,7 +89,7 @@ test('starting a match uses the maze shown in the setup preview', () => {
 });
 test('all six tanks spawn clear of walls and one another', () => {
   for (let seed = 0; seed < 50; seed++) {
-    const game = new Game(
+    const game = createTestGame(
       {
         players: [
           { kind: 'human' },
@@ -107,7 +107,7 @@ test('all six tanks spawn clear of walls and one another', () => {
   }
 });
 function emptyArena() {
-  const game = new Game(
+  const game = createTestGame(
     {
       players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
       target: 3,
@@ -247,7 +247,7 @@ test('rounds award scores, finish matches, and handle draws', () => {
 });
 for (const difficulty of ['easy', 'medium', 'hard'])
   test(`${difficulty} bots navigate a maze and engage enemies`, () => {
-    const game = new Game(
+    const game = createTestGame(
       {
         players: [
           { kind: 'human' },

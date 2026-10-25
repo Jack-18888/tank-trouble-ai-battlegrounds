@@ -4,5 +4,6 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["scripts/**/*.ts", "tests/**/*.ts", "vite.config.ts", "eslint.config.ts"]
+  "include": ["scripts/**/*.ts", "tests/**/*.ts", "vite.config.ts", "eslint.config.ts"],
+  "exclude": ["tests/fixtures/browser.ts", "tests/fixtures/bot.worker.ts"]
 }

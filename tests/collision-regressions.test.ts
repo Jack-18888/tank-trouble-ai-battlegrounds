@@ -1,6 +1,7 @@
+import { createTestGame } from './helpers/game.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, PLAYER_SPEED, SHELL_SPEED, firstWall, distance } from '../src/engine.ts';
+import { PLAYER_SPEED, SHELL_SPEED, firstWall, distance } from '../src/engine.ts';
 import {
   tankWall,
   tanksOverlap,
@@ -12,7 +13,7 @@ import {
 
 const wall = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
 function arena() {
-  const game = new Game(
+  const game = createTestGame(
     {
       players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],
       powerups: false,

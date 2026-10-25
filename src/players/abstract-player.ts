@@ -1,4 +1,5 @@
 import type { PlayerContext, PlayerDecision, PlayerProfile } from './types.ts';
+import { validateProfile } from './profile.ts';
 
 const DEFAULT_PROFILE: Readonly<PlayerProfile> = Object.freeze({
   speed: 96,
@@ -16,18 +17,9 @@ export abstract class AbstractPlayer {
     if (new.target === AbstractPlayer || typeof this.decide !== 'function') {
       throw new TypeError('AbstractPlayer is abstract: subclass it and implement decide(context).');
     }
-    const settings = { ...DEFAULT_PROFILE, ...profile };
-    for (const [key, value] of Object.entries(settings)) {
-      const allowZero = key === 'error' || key === 'reaction';
-      if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0)) {
-        throw new TypeError(
-          `Player profile.${key} must be a finite ${allowZero ? 'non-negative' : 'positive'} number.`,
-        );
-      }
-    }
-    this.profile = Object.freeze(settings);
+    this.profile = validateProfile({ ...DEFAULT_PROFILE, ...profile });
     Object.defineProperty(this, 'profile', { writable: false, configurable: false });
   }
 
-  abstract decide(context: PlayerContext): PlayerDecision;
+  abstract decide(context: PlayerContext): PlayerDecision | Promise<PlayerDecision>;
 }

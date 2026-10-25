@@ -24,7 +24,7 @@ Serve `dist/` with any static host. Both development and preview use port 5173; 
 
 ## Code quality
 
-TypeScript checks browser code and Node.js tests/tooling with separate strict configurations. Shared simulation code also compiles in the DOM-free Node.js configuration. ESLint uses typescript-eslint to check code quality, and Prettier formats TypeScript, HTML, CSS, JSON, and Markdown: two spaces, single quotes, a 100-character preferred line width, and LF line endings. Both `npm run check` and `npm run build` require successful type checking; Vite transpilation alone does not replace the compiler checks.
+TypeScript checks browser code, Node.js tests/tooling, and Web Worker code with separate strict configurations. Shared simulation code also compiles in the DOM-free Node.js configuration. ESLint uses typescript-eslint to check code quality, and Prettier formats TypeScript, HTML, CSS, JSON, and Markdown: two spaces, single quotes, a 100-character preferred line width, and LF line endings. Both `npm run check` and `npm run build` require successful type checking; Vite transpilation alone does not replace the compiler checks.
 
 | Command                | Purpose                                                 |
 | ---------------------- | ------------------------------------------------------- |
@@ -70,10 +70,11 @@ Match play runs locally, and preferences use browser local storage. There are no
 ## Source layout
 
 - `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
-- `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, shared player control application, swept projectile collisions, power-ups, and match state.
-- `src/players/`: shared abstract player contract, keyboard/touch player, movement and firing profiles, decision types, and roster controller swaps.
+- `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, queued player command application, swept projectile collisions, power-ups, and match state.
+- `src/players/`: shared abstract player contract, runtime, human/worker connections, bounded messaging, per-bot scheduling, profiles, and roster controller swaps.
 - `src/bots/`: Easy/Medium/Hard subclasses, shared combat strategy, and the registry used by the game and setup UI.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
+- `src/queries.ts`, `src/rules.ts`, `src/random.ts`: DOM-free pathfinding, visibility, shot prediction, rules, and seeded randomness shared with workers.
 - `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.
 - `src/main.ts`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
 - `src/audio.ts`: synthesized Web Audio effects.
@@ -81,11 +82,18 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `tests/engine.test.ts`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
 - `tests/collision-regressions.test.ts`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
 - `tests/bots.test.ts`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
+- `tests/connections.test.ts`: readiness, command ordering, backpressure, stale replies, pause/resume, lifecycle cleanup, worker failures/timeouts, and independent randomness.
 - `tests/players.test.ts`: human input in any slot, controller swapping, roster validation, preference migration, reaction timing, and bot-only round progression.
 
-To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each tank has an independent controller, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
+To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each bot runs in its own dedicated Web Worker, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 
-Programmatic matches use `new Game({ players: [{ kind: 'human' }, { kind: 'bot', botId: 'hard' }] })`. Use only bot slots for spectator matches. Old saved opponent/difficulty preferences migrate to this roster format automatically.
+Programmatic browser matches create a `Game` with the desired roster and a `PlayerRuntime(game, browserBotConnection)` (import the factory from `src/players/browser-connection.ts`). Call `game.start()`, advance with `runtime.step(dt)`, and send keyboard/touch changes through `runtime.setInput(input)`. Dispose the runtime when replacing the game. Use only bot slots for spectator matches. Old saved preferences migrate automatically.
+
+The game runs physics at 120 Hz and publishes completed world snapshots at 30 Hz. Bot decisions run independently in dedicated workers; a slow calculation does not hold up the game or other bots. The game retains each player's last commands until a newer decision arrives. Each worker has one observation in flight and one replaceable pending snapshot. Human commands take effect on the next physics tick without waiting for an observation.
+
+Worker errors or ten seconds without a reply (excluding paused time) stop that tank's controls and mark it OFFLINE. The match continues; the controller is recreated next round. Pausing clears controls and invalidates pending decisions. Browser matches never fall back to calculating bots on the main thread.
+
+Seeded maps and deterministic physics remain supported. Live worker reply timing can vary, so a seed alone does not reproduce an entire live match. Headless tests explicitly inject `InProcessConnection` through the runtime factory; `Game.update(dt)` itself only advances physics.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 
@@ -97,6 +105,6 @@ With the development server running and Chrome or Chromium installed:
 npm run test:browser
 ```
 
-Set `CHROME_PATH` if needed. This uses Chromium’s debugging protocol without a browser automation dependency. It checks roster limits, human controller swaps, bot-only spectator matches, settings taking effect next match, mixed difficulties, input, pause, help, touch controls, preference migration and persistence, console errors, and layouts from 390 to 1440 pixels wide. Screenshots and an isolated temporary browser profile go in the ignored `.qa/` directory.
+Set `CHROME_PATH` if needed. This uses Chromium’s debugging protocol without a browser automation dependency. It verifies real worker isolation during a one-second CPU calculation, asynchronous module-based bots, offline notices, worker loading in the production bundle, roster limits, human controller swaps, bot-only spectator matches, settings taking effect next match, mixed difficulties, input, pause, help, touch controls, preference migration and persistence, console errors, and layouts from 390 to 1440 pixels wide. Screenshots and an isolated temporary browser profile go in the ignored `.qa/` directory.
 
 To check the compiled production bundle, start `npm run preview` after building, then run `npm run test:browser -- --preview`. This mode exercises the rendered game without importing development-only source modules.

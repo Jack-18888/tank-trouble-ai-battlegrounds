@@ -1,7 +1,7 @@
 import type { DeepReadonly, Point } from '../types.ts';
 import type { BotContext, BotObservation, BotQueries } from './types.ts';
 
-function freezeTree<T>(value: T): DeepReadonly<T> {
+export function freezeTree<T>(value: T): DeepReadonly<T> {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.freeze(value);
     for (const child of Object.values(value)) freezeTree(child);

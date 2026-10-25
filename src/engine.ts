@@ -6,16 +6,24 @@ import {
   TRACK_SPACING,
   TANK_BOUND_RADIUS,
   tanksOverlap,
-  sweepWall,
   sweepTank,
   muzzlePosition,
-  SHELL_RADIUS,
 } from './geometry.ts';
 import { clamp, distance } from './math.ts';
-import { createBot, hasBot } from './bots/index.ts';
-import { createBotContext } from './bots/context.ts';
-import { Player, HUMAN_PROFILE } from './players/player.ts';
-import type { AbstractPlayer } from './players/abstract-player.ts';
+import { hasBot } from './bots/index.ts';
+import { observeWorld } from './players/observation.ts';
+import { validateProfile } from './players/profile.ts';
+import { randomGenerator } from './random.ts';
+import { CELL, SHELL_SPEED, SHELL_LIFETIME, RULES } from './rules.ts';
+import { firstWall, lineOfSight, predictShot } from './queries.ts';
+import type {
+  ControlStamp,
+  DecisionEnvelope,
+  PlayerState,
+  WorldFrame,
+} from './players/connection.ts';
+import type { PlayerProfile } from './players/types.ts';
+import { HUMAN_PROFILE } from './players/player.ts';
 import type { BotContext } from './bots/types.ts';
 import type {
   Bullet,
@@ -27,7 +35,6 @@ import type {
   MapSize,
   MazeDensity,
   Particle,
-  PlayerInput,
   PlayerSlot,
   Point,
   Powerup,
@@ -39,14 +46,12 @@ import type {
   Tank,
   Track,
   Wall,
-  WallCollision,
 } from './types.ts';
 
 export { clamp, angleDiff, distance } from './math.ts';
-export const CELL = 64;
-export const PLAYER_SPEED = HUMAN_PROFILE.speed;
-export const SHELL_SPEED = 140;
-export const SHELL_LIFETIME = 7.5;
+export { CELL, PLAYER_SPEED, SHELL_SPEED, SHELL_LIFETIME } from './rules.ts';
+export { randomGenerator } from './random.ts';
+export { cellAt, neighbors, findPath, firstWall } from './queries.ts';
 export const COLORS = ['#376b48', '#d17a4d', '#b39b40', '#5e889e', '#9680ad', '#bd6877'];
 export const NAMES = ['Moss', 'Rusty', 'Brass', 'Cobalt', 'Violet', 'Blush'];
 export const DEFAULT_CONFIG: GameConfig = {
@@ -107,18 +112,6 @@ export function validateGameConfig(value: unknown): GameConfig {
         ? raw.density
         : 'balanced',
     powerups: Boolean(raw.powerups),
-  };
-}
-
-export function randomGenerator(seed: Seed): () => number {
-  let value = 2166136261;
-  for (const c of String(seed)) value = Math.imul(value ^ c.charCodeAt(0), 16777619);
-  return () => {
-    value += 0x6d2b79f5;
-    let n = value;
-    n = Math.imul(n ^ (n >>> 15), n | 1);
-    n ^= n + Math.imul(n ^ (n >>> 7), n | 61);
-    return ((n ^ (n >>> 14)) >>> 0) / 4294967296;
   };
 }
 
@@ -199,54 +192,6 @@ export function generateMap(
   };
 }
 
-export function cellAt(map: ReadonlyGameMap, x: number, y: number): number {
-  return (
-    clamp(Math.floor(y / CELL), 0, map.rows - 1) * map.cols +
-    clamp(Math.floor(x / CELL), 0, map.cols - 1)
-  );
-}
-export function neighbors(map: ReadonlyGameMap, id: number): number[] {
-  const c = map.cells[id];
-  return [id - map.cols, id + 1, id + map.cols, id - 1].filter(
-    (next, i) => !c.walls[i] && next >= 0 && next < map.cells.length,
-  );
-}
-export function findPath(map: ReadonlyGameMap, start: number, end: number): number[] {
-  if (start === end) return [start];
-  const previous = new Int32Array(map.cells.length).fill(-1);
-  previous[start] = start;
-  const queue = [start];
-  for (let i = 0; i < queue.length; i++) {
-    for (const next of neighbors(map, queue[i])) {
-      if (previous[next] !== -1) continue;
-      previous[next] = queue[i];
-      if (next === end) {
-        const path = [end];
-        while (path[path.length - 1] !== start) path.push(previous[path[path.length - 1]]);
-        return path.reverse();
-      }
-      queue.push(next);
-    }
-  }
-  return [];
-}
-
-export function firstWall(
-  map: Pick<ReadonlyGameMap, 'walls'>,
-  x: number,
-  y: number,
-  dx: number,
-  dy: number,
-  radius = SHELL_RADIUS,
-): WallCollision | null {
-  let result: WallCollision | null = null;
-  for (const wall of map.walls) {
-    const hit = sweepWall(x, y, dx, dy, wall, radius);
-    if (hit && (!result || hit.t < result.t)) result = { ...hit, wall };
-  }
-  return result;
-}
-
 export class Game {
   events: GameEvent[] = [];
   config: GameConfig;
@@ -261,7 +206,12 @@ export class Game {
   // prepareRound initializes the map before the constructor returns.
   map!: GameMap;
   tanks: Tank[] = [];
-  players = new Map<number, AbstractPlayer>();
+  players = new Map<number, PlayerState>();
+  generation = 0;
+  epoch = 0;
+  tick = 0;
+  private readonly pendingDecisions = new Map<number, DecisionEnvelope>();
+  private readonly observationRandom = new Map<number, () => number>();
   bullets: Bullet[] = [];
   powerups: Powerup[] = [];
   elapsed = 0;
@@ -305,6 +255,10 @@ export class Game {
       .toUpperCase();
   }
   prepareRound(seed?: Seed) {
+    this.generation++;
+    this.invalidateControls();
+    this.tick = 0;
+    this.observationRandom.clear();
     this.players = new Map();
     this.map = generateMap(this.config.size, this.config.density, seed ?? this.seed());
     this.bullets = [];
@@ -357,7 +311,6 @@ export class Game {
         tread: 0,
         leftTread: 0,
         rightTread: 0,
-        think: this.rng() * 0.4,
         steer: 0,
         throttle: 0,
         fire: false,
@@ -369,10 +322,12 @@ export class Game {
       };
     });
     for (const tank of this.tanks) {
-      this.players.set(
-        tank.id,
-        tank.controller.kind === 'human' ? new Player() : createBot(tank.controller.botId),
-      );
+      this.players.set(tank.id, {
+        status: 'connecting',
+        profile: tank.controller.kind === 'human' ? HUMAN_PROFILE : null,
+        sequence: 0,
+        observationTick: -1,
+      });
     }
     this.emit({ type: 'map' });
   }
@@ -384,12 +339,14 @@ export class Game {
     this.emit({ type: 'score' });
   }
   beginCountdown() {
+    this.invalidateControls();
     this.state = 'countdown';
     this.timer = 2.4;
     this.lastCount = -1;
     this.emit({ type: 'state' });
   }
   pause() {
+    this.invalidateControls();
     if (this.state === 'paused') {
       this.state = this.resumeState;
       this.emit({ type: 'state' });
@@ -401,7 +358,7 @@ export class Game {
       this.emit({ type: 'state' });
     }
   }
-  update(dt: number, input: PlayerInput = {}) {
+  update(dt: number) {
     dt = clamp(dt, 0, 0.04);
     if (dt === 0) return;
     if (this.state === 'ready' || this.state === 'paused' || this.state === 'matchOver') return;
@@ -429,6 +386,8 @@ export class Game {
       }
       return;
     }
+    this.applyPendingDecisions();
+    this.tick++;
     this.elapsed += dt;
     for (const tank of this.tanks) {
       if (!tank.alive) continue;
@@ -440,11 +399,11 @@ export class Game {
       const oldX = tank.x,
         oldY = tank.y,
         oldAngle = tank.angle;
-      const { profile } = this.getPlayerController(tank.id);
-      tank.think -= dt;
-      if (profile.reaction === 0 || tank.think <= 0) {
-        this.think(tank, input);
-        tank.think = profile.reaction === 0 ? 0 : profile.reaction * (0.85 + this.rng() * 0.3);
+      const profile = this.players.get(tank.id)?.profile;
+      if (!profile) {
+        tank.vx = 0;
+        tank.vy = 0;
+        continue;
       }
       const rotated = this.turnTank(tank, tank.steer * profile.turn * dt);
       const driveX = tank.x,
@@ -580,7 +539,8 @@ export class Game {
     // Never clamp a shell back into its own hull. A blocked muzzle cannot fire.
     if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return false;
     const spread = tank.power === 'scatter' ? [-0.17, 0, 0.17] : [0];
-    const { profile } = this.getPlayerController(tank.id);
+    const profile = this.players.get(tank.id)?.profile;
+    if (!profile) return false;
     const error = profile.error ? (this.rng() - 0.5) * 2 * profile.error : 0;
     for (const offset of spread.slice(0, 5 - active)) {
       const angle = tank.angle + offset + error;
@@ -662,6 +622,7 @@ export class Game {
     this.bullets = this.bullets.filter((b) => !b.dead);
   }
   destroyTank(tank: Tank, owner: number) {
+    this.playerClosed(tank.id);
     tank.alive = false;
     if (owner !== tank.id && this.tanks[owner]) this.tanks[owner].kills++;
     this.burst(tank.x, tank.y, tank.color, 28, 125, 0.8);
@@ -671,6 +632,7 @@ export class Game {
     this.emit({ type: 'score' });
   }
   finishRound(winner: Tank | null) {
+    this.invalidateControls();
     if (winner) this.scores[winner.id]++;
     this.winner = winner;
     this.state =
@@ -686,118 +648,146 @@ export class Game {
     this.emit({ type: 'state' });
   }
   lineOfSight(a: Readonly<Point>, b: Readonly<Point>, map: ReadonlyGameMap = this.map): boolean {
-    return !firstWall(map, a.x, a.y, b.x - a.x, b.y - a.y, 5);
+    return lineOfSight(a, b, map);
   }
-  // Predict the first tank a shot meets, including optional ricochets.
   shotTarget(
     tank: Readonly<ShotTank>,
     angle: number,
     maxBounces = 0,
     scene: ShotScene = this,
   ): ShotPrediction | null {
-    const muzzle = muzzlePosition(tank, angle);
-    if (firstWall(scene.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return null;
-    let { x, y } = muzzle;
-    let vx = Math.cos(angle),
-      vy = Math.sin(angle),
-      traveled = 0;
-    for (let bounce = 0; bounce <= maxBounces; bounce++) {
-      const range = SHELL_SPEED * SHELL_LIFETIME - traveled;
-      const dx = vx * range,
-        dy = vy * range;
-      const wall = firstWall(scene.map, x, y, dx, dy);
-      let first = wall ? wall.t : 1;
-      let target = null;
-      for (const other of scene.tanks) {
-        if (!other.alive || (other.id === tank.id && bounce === 0)) continue;
-        const t = sweepTank(x, y, dx, dy, other);
-        if (t !== null && t < first) {
-          first = t;
-          target = other.id;
-        }
-      }
-      traveled += first * range;
-      if (target !== null) return { id: target, distance: traveled };
-      if (!wall || traveled >= SHELL_SPEED * SHELL_LIFETIME) return null;
-      x += dx * wall.t + wall.nx * 0.03;
-      y += dy * wall.t + wall.ny * 0.03;
-      const normalSpeed = vx * wall.nx + vy * wall.ny;
-      vx -= 2 * normalSpeed * wall.nx;
-      vy -= 2 * normalSpeed * wall.ny;
-    }
-    return null;
+    return predictShot(tank, angle, maxBounces, scene);
+  }
+  controlStamp(): ControlStamp {
+    return { generation: this.generation, round: this.round, epoch: this.epoch, tick: this.tick };
+  }
+  snapshot(): WorldFrame {
+    return structuredClone({
+      ...this.controlStamp(),
+      tanks: this.tanks,
+      bullets: this.bullets.map(({ x, y, vx, vy, owner, life, age, bounces }) => ({
+        x,
+        y,
+        vx,
+        vy,
+        owner,
+        life,
+        age,
+        bounces,
+      })),
+      powerups: this.powerups,
+      match: {
+        round: this.round,
+        elapsed: this.elapsed,
+        scores: this.scores,
+        target: this.config.target,
+        state: this.state,
+      },
+    });
   }
   getBotContext(tank: Tank): BotContext {
-    return createBotContext(
-      {
-        self: tank,
-        tanks: this.tanks,
-        enemies: this.tanks.filter((other) => other.alive && other.id !== tank.id),
-        bullets: this.bullets.map(({ x, y, vx, vy, owner, life, age, bounces }) => ({
-          x,
-          y,
-          vx,
-          vy,
-          owner,
-          life,
-          age,
-          bounces,
-        })),
-        powerups: this.powerups,
-        map: this.map,
-        match: {
-          round: this.round,
-          elapsed: this.elapsed,
-          scores: this.scores,
-          target: this.config.target,
-          state: this.state,
-        },
-        rules: {
-          cellSize: CELL,
-          playerSpeed: PLAYER_SPEED,
-          shellSpeed: SHELL_SPEED,
-          shellLifetime: SHELL_LIFETIME,
-          maxShells: 5,
-        },
-      },
-      {
-        random: this.rng,
-        cellAt,
-        findPath,
-        lineOfSight: this.lineOfSight.bind(this),
-        predictShot: this.shotTarget.bind(this),
-      },
-    );
-  }
-  private getPlayerController(id: number): AbstractPlayer {
-    const player = this.players.get(id);
-    if (!player) throw new Error('Missing controller for player ' + id);
-    return player;
-  }
-  think(tank: Tank, input: PlayerInput = {}) {
-    let observation: BotContext | undefined;
-    const decision = this.getPlayerController(tank.id).decide(
-      Object.freeze({
-        input: Object.freeze(tank.id === this.humanId ? { ...input } : {}),
-        observe: () => (observation ??= this.getBotContext(tank)),
-      }),
-    );
-    if (decision && 'then' in decision && typeof decision.then === 'function') {
-      throw new TypeError(
-        'AbstractPlayer.decide(context) must return a synchronous movement decision.',
-      );
+    let random = this.observationRandom.get(tank.id);
+    if (!random) {
+      random = randomGenerator(this.map.seed + ':' + this.round + ':' + tank.id);
+      this.observationRandom.set(tank.id, random);
     }
-    tank.steer =
-      typeof decision?.steer === 'number' && Number.isFinite(decision.steer)
-        ? clamp(decision.steer, -1, 1)
-        : 0;
-    tank.throttle =
-      typeof decision?.throttle === 'number' && Number.isFinite(decision.throttle)
-        ? clamp(decision.throttle, -1, 1)
-        : 0;
-    tank.fire = decision?.fire === true;
-    // Keep the short-lived movement-stagnation sensor on the simulation side.
-    if (tank.stuck > 1.5) tank.stuck = 0;
+    return observeWorld(
+      {
+        generation: this.generation,
+        round: this.round,
+        playerId: tank.id,
+        botId: '',
+        seed: '',
+        map: this.map,
+        rules: RULES,
+      },
+      this.snapshot(),
+      random,
+    );
+  }
+  playerReady(id: number, profile: Readonly<PlayerProfile>) {
+    const state = this.players.get(id);
+    if (!state || state.status === 'failed' || state.status === 'closed') return;
+    state.profile = validateProfile(profile);
+    state.status = 'ready';
+    this.emit({ type: 'playerStatus', id, status: 'ready' });
+  }
+  playerFailed(id: number, reason: string) {
+    const state = this.players.get(id);
+    if (!state || state.status === 'failed' || state.status === 'closed') return;
+    state.status = 'failed';
+    state.failure = reason;
+    this.clearPlayerControls(id);
+    this.emit({ type: 'playerStatus', id, status: 'failed' });
+  }
+  playerClosed(id: number) {
+    const state = this.players.get(id);
+    if (state && state.status !== 'failed') state.status = 'closed';
+    this.clearPlayerControls(id);
+  }
+  submitDecision(id: number, envelope: DecisionEnvelope): boolean {
+    const state = this.players.get(id);
+    if (
+      !state ||
+      state.status !== 'ready' ||
+      !this.tanks[id]?.alive ||
+      this.state !== 'playing' ||
+      envelope.generation !== this.generation ||
+      envelope.round !== this.round ||
+      envelope.epoch !== this.epoch ||
+      !Number.isSafeInteger(envelope.sequence) ||
+      envelope.sequence <= state.sequence ||
+      !Number.isSafeInteger(envelope.tick) ||
+      envelope.tick < state.observationTick ||
+      envelope.tick > this.tick
+    )
+      return false;
+    state.sequence = envelope.sequence;
+    state.observationTick = envelope.tick;
+    const value = envelope.decision;
+    this.pendingDecisions.set(id, {
+      ...envelope,
+      decision: {
+        steer:
+          typeof value?.steer === 'number' && Number.isFinite(value.steer)
+            ? clamp(value.steer, -1, 1)
+            : 0,
+        throttle:
+          typeof value?.throttle === 'number' && Number.isFinite(value.throttle)
+            ? clamp(value.throttle, -1, 1)
+            : 0,
+        fire: value?.fire === true,
+      },
+    });
+    return true;
+  }
+  private applyPendingDecisions() {
+    for (const [id, envelope] of this.pendingDecisions) {
+      if (
+        envelope.epoch !== this.epoch ||
+        envelope.generation !== this.generation ||
+        !this.tanks[id]?.alive ||
+        this.players.get(id)?.status !== 'ready'
+      )
+        continue;
+      Object.assign(this.tanks[id], envelope.decision);
+    }
+    this.pendingDecisions.clear();
+    for (const tank of this.tanks) if (tank.stuck > 1.5) tank.stuck = 0;
+  }
+  private clearPlayerControls(id: number) {
+    this.pendingDecisions.delete(id);
+    const tank = this.tanks[id];
+    if (tank) {
+      tank.steer = 0;
+      tank.throttle = 0;
+      tank.fire = false;
+    }
+  }
+  private invalidateControls() {
+    this.epoch++;
+    this.pendingDecisions.clear();
+    for (const tank of this.tanks) this.clearPlayerControls(tank.id);
   }
   updatePowerups(dt: number) {
     this.powerTimer -= dt;

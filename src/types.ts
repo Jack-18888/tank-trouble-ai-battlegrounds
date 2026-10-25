@@ -92,7 +92,6 @@ export interface Tank extends TankPose {
   tread: number;
   leftTread: number;
   rightTread: number;
-  think: number;
   steer: number;
   throttle: number;
   fire: boolean;
@@ -143,6 +142,7 @@ export interface ShotScene {
 export type GameEvent =
   | { type: 'map' | 'score' | 'state' | 'go' | 'bounce' }
   | { type: 'fire' | 'shield'; id: number }
+  | { type: 'playerStatus'; id: number; status: 'ready' | 'failed' }
   | { type: 'countdown'; count: number }
   | { type: 'destroy'; id: number; owner: number }
   | { type: 'roundEnd'; winner: number | null; match: boolean }

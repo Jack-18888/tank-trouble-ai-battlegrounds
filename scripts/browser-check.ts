@@ -24,6 +24,18 @@ interface EvaluateResponse {
   result: { value?: unknown };
   exceptionDetails?: ExceptionDetails;
 }
+interface WorkerMetrics {
+  tick: number;
+  x: number;
+  drawn: number;
+  spawned: number;
+  slowFinished: boolean;
+  fastDecisions: number;
+  moduleDecisions: number;
+  statuses: string[];
+}
+let workerIsolation:
+  { ticks: number; frames: number; humanPixels: number; otherDecisions: number } | undefined;
 interface CornerResult {
   fired: boolean;
   alive: boolean;
@@ -261,6 +273,10 @@ try {
   await delay(700);
   await key('ArrowUp', 'ArrowUp', 'keyUp');
   await key(' ', 'Space', 'keyUp');
+  assert.equal(
+    await evaluate(`document.querySelectorAll('[data-controller-status="failed"]').length`),
+    0,
+  );
   await screenshot('desktop-playing');
   await key('Escape', 'Escape');
   await key('Escape', 'Escape', 'keyUp');
@@ -398,6 +414,10 @@ try {
       'spectators must not capture driving keys',
     );
   }
+  assert.equal(
+    await evaluate(`document.querySelectorAll('[data-controller-status="ready"]').length`),
+    6,
+  );
   await screenshot('desktop-spectator-playing');
   await click('help-button');
   assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
@@ -431,55 +451,71 @@ try {
   await selectController(1, 'human');
   await evaluate(`document.querySelector('#difficulty [data-value="medium"]').click()`);
   if (!preview) {
-    // A registered implementation should be usable through setup without a
-    // special-case engine branch or a hand-maintained list of UI choices.
-    await evaluate(`(async () => {
-    const {registerBot} = await import('/src/bots/index.ts');
-    const {AbstractPlayer} = await import('/src/players/index.ts');
-    window.__customBotCalls=0;
-    class BrowserTestBot extends AbstractPlayer {
-      decide({observe}) {
-        const context=observe();
-        if (!context.map.cells.length || !Object.isFrozen(context.self)) throw Error('Incomplete bot context');
-        window.__customBotCalls++;
-        return {throttle:0.5,steer:0.2};
-      }
-    }
-    registerBot('browser-custom',BrowserTestBot,{label:'Custom',tagline:'CUSTOM STRATEGY'});
-  })()`);
+    await evaluate(
+      `(async()=>{const module=await import('/tests/fixtures/browser.ts'); window.__workerQA=module.startWorkerFixture();})()`,
+    );
+    await evaluate('window.__workerQA.waitForStart()');
+    const before = await evaluate<WorkerMetrics>('window.__workerQA.measure()');
+    await key('ArrowUp', 'ArrowUp');
+    await delay(250);
+    const during = await evaluate<WorkerMetrics>('window.__workerQA.measure()');
+    await key('ArrowUp', 'ArrowUp', 'keyUp');
+    assert.equal(during.slowFinished, false, 'fixture must still be calculating');
+    assert.equal(during.spawned, 4, 'each bot gets its own worker');
+    assert.ok(during.tick - before.tick > 5, 'physics stalled behind a slow bot');
+    assert.ok(during.drawn - before.drawn >= 2, 'drawing stalled behind a slow bot');
+    assert.ok(during.x > before.x, 'human input stalled behind a slow bot');
+    assert.ok(during.fastDecisions > before.fastDecisions, 'another bot stalled behind a slow bot');
+    workerIsolation = {
+      ticks: during.tick - before.tick,
+      frames: during.drawn - before.drawn,
+      humanPixels: during.x - before.x,
+      otherDecisions: during.fastDecisions - before.fastDecisions,
+    };
+    await screenshot('worker-isolation');
+    await evaluate('window.__workerQA.waitForFinish()');
+    const finished = await evaluate<WorkerMetrics>('window.__workerQA.measure()');
+    assert.ok(finished.moduleDecisions > 0, 'importable asynchronous custom bot did not run');
+    assert.ok(finished.statuses.slice(0, 4).every((status) => status === 'ready'));
+    assert.equal(
+      finished.statuses[4],
+      'failed',
+      'a thrown worker decision stops only its own tank',
+    );
+    await evaluate('window.__workerQA.dispose()');
+    // A main-only registration is intentionally absent from the production worker catalog.
+    // Its startup failure must stop one tank, show a notice, and leave the match running.
     await click('tank-plus');
-    assert.equal(await evaluate(`document.querySelectorAll('#difficulty button').length`), 4);
-    assert.equal(
-      await evaluate(
-        `Array.from(document.querySelectorAll('[data-player]')).every(s=>Array.from(s.options).some(o=>o.value==='bot:browser-custom'))`,
-      ),
-      true,
-    );
-    await evaluate(`document.querySelector('#difficulty [data-value="browser-custom"]').click()`);
-    assert.equal(
-      await evaluate(`document.getElementById('difficulty-status').textContent`),
-      'CUSTOM STRATEGY',
-    );
+    await selectController(2, 'bot:qa-crash');
     await click('start-button');
     await delay(2900);
-    assert.ok(await evaluate(`window.__customBotCalls>0`));
-    await screenshot('custom-bot-playing');
-    await click('pause-button');
-    await size(390, 844, true);
-    await delay(100);
     assert.equal(
-      await evaluate(`document.documentElement.scrollWidth>innerWidth`),
-      false,
-      'custom bot choices overflow mobile layout',
+      await evaluate(`document.querySelector('[data-tank="2"]').dataset.controllerStatus`),
+      'failed',
     );
-    await size(1440, 900, false);
-    await delay(100);
+    assert.ok(
+      await evaluate(
+        `document.querySelector('[data-tank="2"] .score-sub').textContent.includes('OFFLINE')`,
+      ),
+    );
+    assert.equal(
+      await evaluate(`document.getElementById('arena-state').textContent`),
+      'LIVE MATCH',
+    );
+    assert.ok(
+      await evaluate(
+        `document.getElementById('round-toast').textContent.includes('controller stopped')`,
+      ),
+      'countdown must not replace the worker failure notice',
+    );
+    await screenshot('worker-offline');
+    await click('pause-button');
     await evaluate(`document.querySelector('[data-action="quit"]').click()`);
     // Exercise the actual engine and renderer in the reported wall-edge pose.
     // This fixture exists only in the isolated QA browser, not in the game UI.
     const corner = await evaluate<CornerResult>(`(async () => {
-    const [{Game}, {Renderer}, geometry] = await Promise.all([import('/src/engine.ts'), import('/src/renderer.ts'), import('/src/geometry.ts')]);
-    const g = new Game({players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],powerups:false}, 'browser-corner');
+    const [{createTestGame}, {Renderer}, geometry] = await Promise.all([import('/tests/helpers/game.ts'), import('/src/renderer.ts'), import('/src/geometry.ts')]);
+    const g = createTestGame({players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }],powerups:false}, 'browser-corner');
     const edge = {x1:32,y1:96,x2:128,y2:96};
     g.map = {...g.map, cols:4, rows:3, width:256, height:192, walls:[edge], cells:g.map.cells.filter(c=>c.x<4&&c.y<3)};
     const tank = g.tanks[0]; Object.assign(tank, {x:168,y:102,angle:-3*Math.PI/4,cooldown:0});
@@ -574,6 +610,7 @@ try {
     JSON.stringify(
       {
         passed: true,
+        ...(workerIsolation ? { workerIsolation } : {}),
         checks: [
           'startup',
           'maze shuffle',
@@ -592,7 +629,9 @@ try {
           'saved preferences',
           ...(!preview
             ? [
-                'registered custom bot appears in setup and controls a live opponent',
+                'one-second bot computation does not block physics, drawing, human input, or another bot',
+                'importable asynchronous custom bot executes inside a worker',
+                'failed worker is marked offline while the match continues',
                 'wall-edge firing regression',
                 'right steering at wall contact with no silhouette overlap',
                 'free track drives and pivots around a wall endpoint',

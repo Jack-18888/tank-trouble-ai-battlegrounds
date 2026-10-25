@@ -2,7 +2,8 @@ import { Game, DEFAULT_CONFIG, COLORS, NAMES, validateGameConfig } from './engin
 import { getBotType, getBotTypes, hasBot } from './bots/index.ts';
 import { Renderer, tankIcon } from './renderer.ts';
 import { Sound } from './audio.ts';
-import { assignController } from './players/index.ts';
+import { assignController, PlayerRuntime } from './players/index.ts';
+import { browserBotConnection } from './players/browser-connection.ts';
 
 interface Controls {
   arena: HTMLCanvasElement;
@@ -45,9 +46,11 @@ try {
 }
 const config = new Game({ ...DEFAULT_CONFIG, ...saved.config }).config;
 let game = new Game(config);
+let runtime = new PlayerRuntime(game, browserBotConnection);
 const renderer = new Renderer($('arena'));
 const sound = new Sound(saved.sound !== false);
 const keys = new Set<string>();
+let controllerNoticeUntil = 0;
 let accumulator = 0,
   previousTime = 0,
   toastUntil = 0,
@@ -64,6 +67,27 @@ const icons = {
 };
 $('fullscreen-button').innerHTML = icons.fullscreen;
 
+function replaceGame() {
+  runtime.dispose();
+  game = new Game(config);
+  runtime = new PlayerRuntime(game, browserBotConnection);
+}
+function publishInput() {
+  runtime.setInput({
+    forward: keys.has('KeyW') || keys.has('ArrowUp'),
+    backward: keys.has('KeyS') || keys.has('ArrowDown'),
+    left: keys.has('KeyA') || keys.has('ArrowLeft'),
+    right: keys.has('KeyD') || keys.has('ArrowRight'),
+    fire: keys.has('Space'),
+  });
+}
+function clearInput() {
+  keys.clear();
+  for (const button of document.querySelectorAll('[data-key].active'))
+    button.classList.remove('active');
+  publishInput();
+}
+window.addEventListener('pagehide', () => runtime.dispose());
 function persist() {
   try {
     localStorage.setItem(storageKey, JSON.stringify({ config, sound: sound.enabled }));
@@ -81,7 +105,7 @@ function scoreboard() {
   $('scoreboard').innerHTML = game.tanks
     .map(
       (t) =>
-        `<div class="score-card ${t.alive ? '' : 'eliminated'}" data-tank="${t.id}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === game.humanId ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.controller.kind === 'human' ? 'THE HUMAN' : escapeHTML(getBotType(t.controller.botId)?.label ?? t.controller.botId) + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
+        `<div class="score-card ${t.alive ? '' : 'eliminated'}" data-tank="${t.id}" data-controller-status="${game.players.get(t.id)?.status}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === game.humanId ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.controller.kind === 'human' ? 'THE HUMAN' : escapeHTML(getBotType(t.controller.botId)?.label ?? t.controller.botId) + ' BOT' + (game.players.get(t.id)?.status === 'failed' ? ' · OFFLINE' : '')}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
     )
     .join('');
 }
@@ -135,7 +159,7 @@ function settingsUI() {
 function setupChanged() {
   settingsUI();
   if (game.state === 'ready' || game.state === 'matchOver') {
-    game = new Game(config);
+    replaceGame();
     scoreboard();
     stateUI();
     mapUI();
@@ -241,9 +265,11 @@ function stateUI() {
 }
 function start() {
   sound.unlock();
-  keys.clear();
-  if (game.state !== 'ready') game = new Game(config);
+  clearInput();
+  controllerNoticeUntil = 0;
+  if (game.state !== 'ready') replaceGame();
   game.start();
+  runtime.sync();
   scoreboard();
   mapUI();
   stateUI();
@@ -252,18 +278,20 @@ function start() {
   lastClock = '';
 }
 function quit() {
-  keys.clear();
+  clearInput();
   toastUntil = 0;
+  controllerNoticeUntil = 0;
   $('round-toast').classList.remove('visible');
-  game = new Game(config);
+  replaceGame();
   scoreboard();
   mapUI();
   stateUI();
   settingsUI();
 }
 function pause() {
-  keys.clear();
+  clearInput();
   game.pause();
+  runtime.sync();
   stateUI();
 }
 
@@ -347,7 +375,7 @@ for (const [id, field] of [
 }
 $('shuffle-button').addEventListener('click', () => {
   if (game.state === 'ready' || game.state === 'matchOver') {
-    game = new Game(config);
+    replaceGame();
     mapUI();
     scoreboard();
     stateUI();
@@ -407,16 +435,19 @@ window.addEventListener('keydown', (e) => {
   ) {
     e.preventDefault();
     keys.add(e.code);
+    publishInput();
   }
 });
-window.addEventListener('keyup', (e) => keys.delete(e.code));
+window.addEventListener('keyup', (e) => {
+  if (keys.delete(e.code)) publishInput();
+});
 window.addEventListener('blur', () => {
-  keys.clear();
+  clearInput();
   if (['playing', 'countdown', 'roundOver'].includes(game.state)) pause();
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    keys.clear();
+    clearInput();
     if (['playing', 'countdown', 'roundOver'].includes(game.state)) pause();
   }
 });
@@ -429,10 +460,12 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]'))
     sound.unlock();
     button.setPointerCapture(e.pointerId);
     keys.add(key);
+    publishInput();
     button.classList.add('active');
   });
   const release = () => {
     keys.delete(key);
+    publishInput();
     button.classList.remove('active');
   };
   button.addEventListener('pointerup', release);
@@ -451,6 +484,13 @@ function handleEvents() {
     sound.play(event, game.humanId);
     if (event.type === 'state') stateUI();
     if (event.type === 'score') scoreboard();
+    if (event.type === 'playerStatus') {
+      scoreboard();
+      if (event.status === 'failed') {
+        toast(game.tanks[event.id].name + '’s controller stopped. The match continues.', 4000);
+        controllerNoticeUntil = toastUntil;
+      }
+    }
     if (event.type === 'map') {
       mapUI();
       scoreboard();
@@ -463,7 +503,7 @@ function handleEvents() {
       );
     if (event.type === 'go') {
       $('overlay').classList.add('hidden');
-      toast('ROLL OUT.', 1100);
+      if (performance.now() >= controllerNoticeUntil) toast('ROLL OUT.', 1100);
     }
     if (event.type === 'pickup' && event.id === game.humanId)
       toast(
@@ -486,15 +526,8 @@ function frame(time: number) {
   const elapsed = Math.min((time - (previousTime || time)) / 1000, 0.1);
   previousTime = time;
   accumulator += elapsed;
-  const input = {
-    forward: keys.has('KeyW') || keys.has('ArrowUp'),
-    backward: keys.has('KeyS') || keys.has('ArrowDown'),
-    left: keys.has('KeyA') || keys.has('ArrowLeft'),
-    right: keys.has('KeyD') || keys.has('ArrowRight'),
-    fire: keys.has('Space'),
-  };
   while (accumulator >= 1 / 120) {
-    game.update(1 / 120, input);
+    runtime.step(1 / 120);
     accumulator -= 1 / 120;
   }
   handleEvents();

@@ -1,6 +1,7 @@
+import { createTestGame } from './helpers/game.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, DEFAULT_CONFIG, validateGameConfig } from '../src/engine.ts';
+import { DEFAULT_CONFIG, validateGameConfig } from '../src/engine.ts';
 import { AbstractPlayer, Player, assignController } from '../src/players/index.ts';
 import type { PlayerContext, PlayerDecision } from '../src/players/index.ts';
 import { HardBot, registerBot } from '../src/bots/index.ts';
@@ -29,10 +30,12 @@ test('Player directly inherits AbstractPlayer and translates input without obser
 });
 
 test('the human can occupy another slot while slot zero keeps its bot profile', () => {
-  const game = new Game({ players: [bot('hard'), human] }, 'human-second');
+  const game = createTestGame({ players: [bot('hard'), human] }, 'human-second');
   assert.equal(game.humanId, 1);
-  assert.ok(game.players.get(0) instanceof HardBot);
-  assert.ok(game.players.get(1) instanceof Player);
+  game.state = 'playing';
+  game.runtime.sync();
+  assert.ok(game.controllers.get(0) instanceof HardBot);
+  assert.equal(game.players.get(1)?.profile?.reaction, 0);
   assert.equal(game.tanks[0].name, 'Moss');
   assert.equal(game.tanks[1].name, 'You');
   game.state = 'playing';
@@ -138,14 +141,14 @@ test('bot decisions retain their reaction delay and never receive human input', 
     }
   }
   registerBot('test-delayed-player', DelayedBot);
-  const game = new Game({ players: [bot('test-delayed-player'), human] }, 'reaction');
-  const controller = game.players.get(0);
+  const game = createTestGame({ players: [bot('test-delayed-player'), human] }, 'reaction');
+  game.state = 'playing';
+  game.runtime.sync();
+  const controller = game.controllers.get(0);
   assert.ok(controller instanceof DelayedBot);
   game.state = 'playing';
-  game.tanks[0].think = 0;
   game.update(1 / 120, { forward: true, fire: true });
   assert.equal(controller.decisions, 1);
-  assert.ok(game.tanks[0].think >= 0.24 * 0.85 && game.tanks[0].think <= 0.24 * 1.15);
   for (let i = 0; i < 10; i++) game.update(1 / 120);
   assert.equal(controller.decisions, 1);
   for (let i = 0; i < 25; i++) game.update(1 / 120);
@@ -153,7 +156,6 @@ test('bot decisions retain their reaction delay and never receive human input', 
   for (const state of ['paused', 'countdown', 'roundOver', 'matchOver'] as const) {
     game.state = state;
     game.timer = 10;
-    game.tanks[0].think = 0;
     game.update(1 / 120);
     assert.equal(controller.decisions, 2);
   }
@@ -183,7 +185,7 @@ test('bot-only matches ignore input, score actual hits, and recreate controllers
   }
   registerBot('test-shooter-player', Shooter);
   registerBot('test-idle-player', Idle);
-  const game = new Game(
+  const game = createTestGame(
     { players: [bot('test-shooter-player'), bot('test-idle-player')], target: 3, powerups: false },
     'spectator',
   );
@@ -194,7 +196,8 @@ test('bot-only matches ignore input, score actual hits, and recreate controllers
   game.map.walls = game.map.walls.filter((wall) => wall.border);
   Object.assign(game.tanks[0], { x: 100, y: 100, angle: 0, cooldown: 0 });
   Object.assign(game.tanks[1], { x: 220, y: 100, angle: Math.PI });
-  const first = game.players.get(0);
+  game.runtime.sync();
+  const first = game.controllers.get(0);
   for (let i = 0; i < 120 * 3 && game.state === 'playing'; i++) {
     game.update(1 / 120, { backward: true, left: true, fire: true });
   }
@@ -206,6 +209,6 @@ test('bot-only matches ignore input, score actual hits, and recreate controllers
   for (let i = 0; i < 120 * 4 && game.round === 1; i++) game.update(1 / 120);
   assert.equal(game.round, 2);
   assert.equal(game.state, 'countdown');
-  assert.notEqual(game.players.get(0), first);
+  assert.notEqual(game.controllers.get(0), first);
   assert.deepEqual(game.scores, [1, 0]);
 });
