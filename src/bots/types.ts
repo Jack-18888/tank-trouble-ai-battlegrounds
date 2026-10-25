@@ -45,11 +45,11 @@ export interface BotObservation {
   };
 }
 export interface BotContext extends DeepReadonly<BotObservation> {
-  random(): number;
-  cellAt(x: number, y: number): number;
-  findPath(start: number, goal: number): number[];
-  lineOfSight(from: Readonly<Point>, to: Readonly<Point>): boolean;
-  predictShot(angle: number, maxBounces?: number): ShotPrediction | null;
+  readonly random: () => number;
+  readonly cellAt: (x: number, y: number) => number;
+  readonly findPath: (start: number, goal: number) => number[];
+  readonly lineOfSight: (from: Readonly<Point>, to: Readonly<Point>) => boolean;
+  readonly predictShot: (angle: number, maxBounces?: number) => ShotPrediction | null;
 }
 export interface BotQueries {
   random(): number;

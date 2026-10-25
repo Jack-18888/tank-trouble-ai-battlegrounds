@@ -2,23 +2,25 @@
 
 Extend `Bot`, implement `decide(context)`, and register the class. The engine and setup UI both use the registry, so new types do not need changes in either of those modules.
 
-The public entry point is `src/bots/index.js`. It exports `Bot`, `EasyBot`, `MediumBot`, `HardBot`, `registerBot`, `createBot`, `hasBot`, `getBotType`, and `getBotTypes`.
+The public entry point is `src/bots/index.ts`. It exports `Bot`, `EasyBot`, `MediumBot`, `HardBot`, `registerBot`, `createBot`, `hasBot`, `getBotType`, and `getBotTypes`, plus the `BotContext`, `BotDecision`, `BotProfile`, `BotMetadata`, and `BotConstructor` types. `Bot` is a TypeScript abstract class, so missing implementations and incompatible decisions are compiler errors.
 
 ## Implement a strategy
 
-For example, add `src/bots/sentry-bot.js`. This bot stays still, remembers an enemy, turns toward it, and fires when its current shot would hit an opponent:
+For example, add `src/bots/sentry-bot.ts`. This bot stays still, remembers an enemy, turns toward it, and fires when its current shot would hit an opponent:
 
-```js
-import { Bot } from './bot.js';
-import { angleDiff, clamp } from '../math.js';
+```ts
+import { Bot } from './bot.ts';
+import type { BotContext, BotDecision } from './types.ts';
+import { angleDiff, clamp } from '../math.ts';
 
 export class SentryBot extends Bot {
+  private targetId: number | null = null;
+
   constructor() {
     super({ reaction: 0.1 });
-    this.targetId = null;
   }
 
-  decide(context) {
+  override decide(context: BotContext): BotDecision {
     const { self, enemies } = context;
     const target = enemies.find((tank) => tank.id === this.targetId) ?? enemies[0];
     if (!target) return {};
@@ -36,10 +38,10 @@ export class SentryBot extends Bot {
 }
 ```
 
-Add its import and registration to `src/bots/index.js`:
+Add its import and registration to `src/bots/index.ts`:
 
-```js
-import { SentryBot } from './sentry-bot.js';
+```ts
+import { SentryBot } from './sentry-bot.ts';
 
 registerBot('sentry', SentryBot, {
   label: 'Sentry',
@@ -52,8 +54,8 @@ It now appears in the difficulty buttons and every opponent dropdown. `label`, `
 
 For a programmatic match, use the registered ID in the existing configuration:
 
-```js
-import { Game } from './src/engine.js';
+```ts
+import { Game } from './src/engine.ts';
 
 const game = new Game({
   opponents: 2,
@@ -66,7 +68,7 @@ Register before constructing the game or loading the setup UI. Unknown IDs in sa
 
 ## Decision contract
 
-`decide(context)` is synchronous. It returns an object with any of these controls:
+`abstract decide(context: BotContext): BotDecision` is the required method. It is synchronous. It returns an object with any of these controls:
 
 | Field      | Meaning                                                             | Default |
 | ---------- | ------------------------------------------------------------------- | ------- |
@@ -80,7 +82,7 @@ The last decision remains active until the next call. Each opponent receives its
 
 ## Available game information
 
-Observations are detached copies and deeply frozen. Strategies can read all of the following without modifying the live simulation:
+`BotContext` is defined in `src/bots/types.ts` using deeply read-only versions of the game entities in `src/types.ts`. Observations are detached copies and deeply frozen. The compiler rejects mutation of observation fields as well as incompatible controls; runtime checks also protect JavaScript callers. Strategies can read all of the following without modifying the live simulation:
 
 | Field      | Contents                                                                                                          |
 | ---------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -121,6 +123,6 @@ Pass overrides to `super(profile)` for the following immutable settings:
 
 All settings must be finite and positive, except `error`, which may be zero. Reaction time and strategy memory are separate from the fixed physics timestep. Power-ups can override firing cooldown just as they do for the player.
 
-Easy, Medium, and Hard each extend `Bot` directly and implement their own `decide` method. Their original navigation, target selection, dodging, and bank-shot behavior is shared through `decideCombat` in `src/bots/combat.js`; their constructors retain the existing movement and firing profiles. Easy applies its own firing hesitation. A custom class can reuse `decideCombat` or implement a completely different strategy.
+Easy, Medium, and Hard each extend `Bot` directly and implement their own `decide` method. Their original navigation, target selection, dodging, and bank-shot behavior is shared through `decideCombat` in `src/bots/combat.ts`; their constructors retain the existing movement and firing profiles. Easy applies its own firing hesitation. A custom class can reuse `decideCombat` or implement a completely different strategy.
 
-Run `npm run check` and `npm run build` after adding a bot. `tests/bots.test.js` covers the extension contract, registration, observations, query consistency, execution in the game, independent memory, and round resets. The browser check also registers a custom implementation and exercises it through the real setup UI.
+Run `npm run check` and `npm run build` after adding a bot. `tests/bots.test.ts` covers the extension contract, registration, observations, query consistency, execution in the game, independent memory, and round resets. The browser check also registers a custom implementation and exercises it through the real setup UI.

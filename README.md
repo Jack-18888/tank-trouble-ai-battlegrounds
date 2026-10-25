@@ -1,6 +1,6 @@
 # Tank Trouble — Ricochet Arena
 
-A browser arcade game inspired by Tank Trouble. Drive a tank through a procedurally generated maze, bounce shots around corners, and be the last tank standing. Built with vanilla JavaScript and Canvas 2D, with no runtime dependencies.
+A browser arcade game inspired by Tank Trouble. Drive a tank through a procedurally generated maze, bounce shots around corners, and be the last tank standing. Built with strict TypeScript and Canvas 2D, with Vite for development and static builds. The compiled game has no runtime package dependencies.
 
 ## Play locally
 
@@ -11,26 +11,29 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:5173. The game needs a web server because it uses JavaScript modules. Installed packages are development tools; the game itself has no runtime dependencies.
+Open http://localhost:5173. Vite compiles the TypeScript modules for the browser and updates the page as source files change. Installed packages are development tools.
 
 ```sh
-npm test       # deterministic simulation tests
-npm run build # creates the standalone static site in dist/
+npm test           # TypeScript simulation tests through tsx
+npm run typecheck  # strict app and test/tooling type checks
+npm run build      # type-checks, then creates the standalone static site in dist/
+npm run preview    # serves the compiled production build locally
 ```
 
-Serve `dist/` with any static host. `node scripts/serve.mjs --dist` previews the built site. Set `PORT` to use a different local port.
+Serve `dist/` with any static host. Both development and preview use port 5173; pass `-- --port 5174` to either npm command to choose another port.
 
 ## Code quality
 
-ESLint checks JavaScript for errors and unused code, with separate browser and Node.js environments. The simulation and geometry modules do not receive browser globals. Prettier handles JavaScript, HTML, CSS, JSON, and Markdown formatting: two spaces, single quotes in JavaScript, a 100-character preferred line width, and LF line endings.
+TypeScript checks browser code and Node.js tests/tooling with separate strict configurations. Shared simulation code also compiles in the DOM-free Node.js configuration. ESLint uses typescript-eslint to check code quality, and Prettier formats TypeScript, HTML, CSS, JSON, and Markdown: two spaces, single quotes, a 100-character preferred line width, and LF line endings. Both `npm run check` and `npm run build` require successful type checking; Vite transpilation alone does not replace the compiler checks.
 
-| Command                | Purpose                                           |
-| ---------------------- | ------------------------------------------------- |
-| `npm run lint`         | Check JavaScript; warnings fail the check         |
-| `npm run lint:fix`     | Apply available ESLint fixes                      |
-| `npm run format`       | Format the project                                |
-| `npm run format:check` | Check formatting without changing files           |
-| `npm run check`        | Run lint, formatting checks, and simulation tests |
+| Command                | Purpose                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| `npm run typecheck`    | Check all application, test, and tooling types          |
+| `npm run lint`         | Check TypeScript; warnings fail the check               |
+| `npm run lint:fix`     | Apply available ESLint fixes                            |
+| `npm run format`       | Format the project                                      |
+| `npm run format:check` | Check formatting without changing files                 |
+| `npm run check`        | Run type checks, lint, formatting, and simulation tests |
 
 Run `npm run check` before committing changes. Build output, dependencies, browser-test artifacts, and local hosting runtime files are excluded from these tools. `.editorconfig` supplies matching whitespace defaults to compatible editors. The committed lockfile keeps tool versions reproducible with `npm ci`.
 
@@ -65,18 +68,19 @@ Match play runs locally, and preferences use browser local storage. There are no
 
 ## Source layout
 
-- `src/engine.js`: DOM-free simulation, seeded maze generation, pathfinding, bot observations and control application, swept projectile collisions, power-ups, and match state.
+- `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
+- `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, bot observations and control application, swept projectile collisions, power-ups, and match state.
 - `src/bots/`: abstract bot contract, Easy/Medium/Hard implementations, shared combat strategy, and the registry used by the game and setup UI.
-- `src/renderer.js`: cached maze rendering, tanks, shells, tracks, and particles.
-- `src/geometry.js`: shared tank silhouettes and exact rounded-wall collision geometry.
-- `src/main.js`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
-- `src/audio.js`: synthesized Web Audio effects.
+- `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
+- `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.
+- `src/main.ts`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
+- `src/audio.ts`: synthesized Web Audio effects.
 - `src/style.css`: responsive arcade interface and reduced-motion support.
-- `tests/engine.test.js`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
-- `tests/collision-regressions.test.js`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
-- `tests/bots.test.js`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
+- `tests/engine.test.ts`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
+- `tests/collision-regressions.test.ts`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
+- `tests/bots.test.ts`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
 
-To add a strategy, extend `Bot`, implement `decide(context)`, and register it in `src/bots/index.js`. It becomes selectable in match setup automatically. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
+To add a strategy, extend `Bot`, implement `decide(context)`, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 
@@ -85,7 +89,9 @@ The simulation uses a fixed timestep independently of the display refresh rate. 
 With the development server running and Chrome or Chromium installed:
 
 ```sh
-node scripts/browser-check.mjs
+npm run test:browser
 ```
 
 Set `CHROME_PATH` if needed. This uses Chromium’s debugging protocol without a browser automation dependency. It checks settings, mixed difficulties, input, pause, help, touch controls, persistence, console errors, and layouts from 390 to 1440 pixels wide. Screenshots and an isolated temporary browser profile go in the ignored `.qa/` directory.
+
+To check the compiled production bundle, start `npm run preview` after building, then run `npm run test:browser -- --preview`. This mode exercises the rendered game without importing development-only source modules.

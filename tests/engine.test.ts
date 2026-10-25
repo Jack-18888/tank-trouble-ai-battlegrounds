@@ -8,8 +8,35 @@ import {
   firstWall,
   distance,
   SHELL_SPEED,
+  DEFAULT_CONFIG,
+  validateGameConfig,
 } from '../src/engine.ts';
 import { tankWall, tanksOverlap } from '../src/geometry.ts';
+
+test('untyped saved settings are validated before entering the typed simulation', () => {
+  for (const value of [undefined, null, [], 42, 'invalid']) {
+    assert.deepEqual(validateGameConfig(value), DEFAULT_CONFIG);
+  }
+  const raw: unknown = {
+    opponents: '5',
+    difficulties: [null, 'hard', 42, 'easy', {}],
+    target: '3',
+    size: 'unsupported',
+    density: false,
+    powerups: 0,
+  };
+  const config = validateGameConfig(raw);
+  assert.deepEqual(config, {
+    opponents: 5,
+    difficulties: ['medium', 'hard', 'medium', 'easy', 'medium'],
+    target: 3,
+    size: 'classic',
+    density: 'balanced',
+    powerups: false,
+  });
+  const game = new Game(config, 'validated-settings');
+  assert.equal(game.bots.size, 5);
+});
 
 test('procedural mazes stay connected across 270 seeds, sizes, and densities', () => {
   for (const size of ['compact', 'classic', 'large'] as const)

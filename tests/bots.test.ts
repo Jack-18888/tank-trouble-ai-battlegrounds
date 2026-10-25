@@ -83,6 +83,10 @@ test('bot observations include detached, deeply read-only world and match data',
     // @ts-expect-error Pickup observations are read-only.
     context.powerups[0].life = 0;
   }, TypeError);
+  assert.throws(() => {
+    // @ts-expect-error Query functions are also part of the read-only context.
+    context.random = () => 0;
+  }, TypeError);
   const oldX = context.self.x;
   tank.x += 1;
   assert.equal(context.self.x, oldX);
