@@ -365,6 +365,37 @@ try {
     assert.ok(turnEnd.x < turnStart.x && turnEnd.x > turnStart.x - 8);
     assert.ok(Math.abs(turnEnd.y - turnStart.y) < 1e-8);
     await screenshot('wall-turn-after');
+    const trackStart = await evaluate<TurnResult>(`(() => {
+    const {g,painter}=window.__cornerQa;
+    g.map.walls=[{x1:32,y1:100,x2:100,y2:100}];
+    const angle=-5*Math.PI/6;
+    Object.assign(g.tanks[0],{x:100-18*Math.cos(angle)-11.5*Math.sin(angle)+.002,
+      y:100-18*Math.sin(angle)+11.5*Math.cos(angle),angle,leftTread:0,rightTread:0});
+    const tank=g.tanks[0];
+    const parent=document.getElementById('corner-qa').parentElement;
+    parent.querySelector('h1').textContent='One track touches. The other can move.';
+    parent.querySelector('p').textContent='Forward movement should pivot the tank around the wall end.';
+    painter.draw(g,0);
+    return {clear:g.canPlaceTank(tank),x:tank.x,y:tank.y,angle:tank.angle};
+  })()`);
+    assert.equal(trackStart.clear, true);
+    await screenshot('free-track-before');
+    const trackEnd = await evaluate<TurnResult & { left: number; right: number }>(`(() => {
+    const {g,painter}=window.__cornerQa;
+    let clear=true;
+    for(let i=0;i<30;i++){
+      g.update(1/120,{forward:true});
+      clear=clear&&g.canPlaceTank(g.tanks[0]);
+    }
+    const tank=g.tanks[0];
+    painter.draw(g,.25);
+    return {clear,x:tank.x,y:tank.y,angle:tank.angle,left:tank.leftTread,right:tank.rightTread};
+  })()`);
+    assert.equal(trackEnd.clear, true);
+    assert.ok(Math.hypot(trackEnd.x - trackStart.x, trackEnd.y - trackStart.y) > 5);
+    assert.ok(trackEnd.angle < trackStart.angle - 0.1);
+    assert.notEqual(trackEnd.left, trackEnd.right);
+    await screenshot('free-track-after');
   }
   assert.deepEqual(errors, [], 'browser logged errors');
   console.log(
@@ -389,6 +420,7 @@ try {
                 'registered custom bot appears in setup and controls a live opponent',
                 'wall-edge firing regression',
                 'right steering at wall contact with no silhouette overlap',
+                'free track drives and pivots around a wall endpoint',
               ]
             : ['compiled production bundle']),
           'no runtime errors',
