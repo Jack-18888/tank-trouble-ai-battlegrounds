@@ -1,15 +1,16 @@
-import { Bot } from './bot.js';
+import { Bot } from './bot.ts';
+import type { BotConstructor, BotMetadata } from './types.ts';
 
-const types = new Map();
+const types = new Map<string, { BotClass: BotConstructor; metadata: BotMetadata }>();
 
 export function registerBot(
-  id,
-  BotClass,
+  id: string,
+  BotClass: BotConstructor,
   {
     label = id,
     tagline = 'CUSTOM BOT',
     description = 'A custom opponent. A different kind of trouble.',
-  } = {},
+  }: Partial<Omit<BotMetadata, 'id'>> = {},
 ) {
   if (typeof id !== 'string' || !/^[a-z][a-z0-9-]*$/.test(id))
     throw new TypeError(
@@ -28,16 +29,16 @@ export function registerBot(
   types.set(id, { BotClass, metadata: Object.freeze({ id, label, tagline, description }) });
 }
 
-export function hasBot(id) {
-  return types.has(id);
+export function hasBot(id: unknown): id is string {
+  return typeof id === 'string' && types.has(id);
 }
-export function getBotType(id) {
-  return types.get(id)?.metadata;
+export function getBotType(id: string | null | undefined): BotMetadata | undefined {
+  return typeof id === 'string' ? types.get(id)?.metadata : undefined;
 }
-export function getBotTypes() {
+export function getBotTypes(): BotMetadata[] {
   return [...types.values()].map((type) => type.metadata);
 }
-export function createBot(id) {
+export function createBot(id: string): Bot {
   const type = types.get(id);
   if (!type) throw new Error(`Unknown bot type "${id}". Register it before creating the game.`);
   return new type.BotClass();

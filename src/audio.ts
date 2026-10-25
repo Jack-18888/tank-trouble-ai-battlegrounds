@@ -1,4 +1,15 @@
+import type { GameEvent } from './types.ts';
+
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 export class Sound {
+  enabled: boolean;
+  lastBounce = 0;
+  ctx?: AudioContext;
   constructor(enabled = true) {
     this.enabled = enabled;
     this.lastBounce = 0;
@@ -12,7 +23,14 @@ export class Sound {
       /* Sound is optional. */
     }
   }
-  tone(frequency, duration, volume, type = 'sine', endFrequency = frequency, delay = 0) {
+  tone(
+    frequency: number,
+    duration: number,
+    volume: number,
+    type: OscillatorType = 'sine',
+    endFrequency = frequency,
+    delay = 0,
+  ) {
     if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
     const start = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator(),
@@ -27,7 +45,8 @@ export class Sound {
     osc.start(start);
     osc.stop(start + duration);
   }
-  play(type, event = {}) {
+  play(event: GameEvent) {
+    const type = event.type;
     if (type === 'fire') this.tone(170, 0.075, event.id === 0 ? 0.045 : 0.018, 'square', 60);
     if (type === 'bounce' && performance.now() - this.lastBounce > 70) {
       this.lastBounce = performance.now();

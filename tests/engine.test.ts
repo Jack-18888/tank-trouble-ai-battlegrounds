@@ -8,12 +8,12 @@ import {
   firstWall,
   distance,
   SHELL_SPEED,
-} from '../src/engine.js';
-import { tankWall, tanksOverlap } from '../src/geometry.js';
+} from '../src/engine.ts';
+import { tankWall, tanksOverlap } from '../src/geometry.ts';
 
 test('procedural mazes stay connected across 270 seeds, sizes, and densities', () => {
-  for (const size of ['compact', 'classic', 'large'])
-    for (const density of ['open', 'balanced', 'dense'])
+  for (const size of ['compact', 'classic', 'large'] as const)
+    for (const density of ['open', 'balanced', 'dense'] as const)
       for (let seed = 0; seed < 30; seed++) {
         const map = generateMap(size, density, `connect-${seed}`),
           visited = new Set([0]),
@@ -149,6 +149,7 @@ test('shield absorbs exactly one hit and the next hit eliminates the tank', () =
       age: 0,
       bounces: 0,
       trail: [],
+      dead: false,
     });
     game.updateBullets(0.2);
   };

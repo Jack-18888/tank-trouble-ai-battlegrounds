@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, PLAYER_SPEED, SHELL_SPEED, firstWall, distance } from '../src/engine.js';
+import { Game, PLAYER_SPEED, SHELL_SPEED, firstWall, distance } from '../src/engine.ts';
 import {
   tankWall,
   tanksOverlap,
@@ -8,9 +8,9 @@ import {
   muzzlePosition,
   BARREL_LENGTH,
   SHELL_RADIUS,
-} from '../src/geometry.js';
+} from '../src/geometry.ts';
 
-const wall = (x1, y1, x2, y2) => ({ x1, y1, x2, y2 });
+const wall = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2 });
 function arena() {
   const game = new Game({ opponents: 1, powerups: false }, 'collision-regression');
   game.map.walls = game.map.walls.filter((w) => w.border);
@@ -114,7 +114,7 @@ test('wall-contact turning works in either direction against all four wall orien
     for (const direction of [-1, 1]) {
       const game = arena(),
         tank = game.tanks[0];
-      const transform = (x, y) => [
+      const transform = (x: number, y: number): [number, number] => [
         100 + (x - 100) * Math.cos(rotation) - (y - 100) * Math.sin(rotation),
         100 + (x - 100) * Math.sin(rotation) + (y - 100) * Math.cos(rotation),
       ];

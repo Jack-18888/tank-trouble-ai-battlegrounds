@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, CELL, SHELL_SPEED } from '../src/engine.js';
+import { Game, CELL, SHELL_SPEED } from '../src/engine.ts';
 import {
   Bot,
   EasyBot,
@@ -11,13 +11,17 @@ import {
   getBotTypes,
   hasBot,
   getBotType,
-} from '../src/bots/index.js';
+} from '../src/bots/index.ts';
+import type { BotContext, BotDecision } from '../src/bots/index.ts';
 
 test('Bot is abstract and registered subclasses must implement decide', () => {
+  // @ts-expect-error Abstract construction is intentionally tested at runtime.
   assert.throws(() => new Bot(), /abstract/);
+  // @ts-expect-error Missing abstract method is intentionally tested at runtime.
   class MissingDecision extends Bot {}
   assert.throws(() => new MissingDecision(), /implement decide/);
   assert.throws(() => registerBot('missing-decision', MissingDecision), /implement decide/);
+  // @ts-expect-error Non-controller classes are intentionally rejected.
   assert.throws(() => registerBot('not-a-bot', class {}), /extend Bot/);
   assert.throws(() => registerBot('Bad ID', EasyBot), /Bot IDs/);
   assert.throws(() => registerBot('easy', EasyBot), /already registered/);
@@ -29,7 +33,7 @@ test('built-in difficulties have distinct classes and retain their movement prof
     ['easy', EasyBot, 78],
     ['medium', MediumBot, 96],
     ['hard', HardBot, 108],
-  ]) {
+  ] as const) {
     const bot = createBot(id);
     assert.ok(bot instanceof Bot);
     assert.ok(bot instanceof Class);
@@ -37,6 +41,7 @@ test('built-in difficulties have distinct classes and retain their movement prof
     assert.equal(bot.profile.speed, speed);
     assert.ok(Object.isFrozen(bot.profile));
     assert.throws(() => {
+      // @ts-expect-error Profiles must be read-only at compile time and runtime.
       bot.profile = {};
     }, TypeError);
   }
@@ -59,18 +64,23 @@ test('bot observations include detached, deeply read-only world and match data',
   assert.equal(context.match.target, game.config.target);
   assert.equal(context.powerups[0].type, 'shield');
   assert.throws(() => {
+    // @ts-expect-error Observation fields must remain read-only.
     context.self.x = 0;
   }, TypeError);
   assert.throws(() => {
+    // @ts-expect-error Nested observation arrays must remain read-only.
     context.map.cells[0].walls[0] = false;
   }, TypeError);
   assert.throws(() => {
+    // @ts-expect-error Observation arrays cannot be changed by a strategy.
     context.enemies.pop();
   }, TypeError);
   assert.throws(() => {
+    // @ts-expect-error Match scores are an immutable observation.
     context.match.scores[0] = 99;
   }, TypeError);
   assert.throws(() => {
+    // @ts-expect-error Pickup observations are read-only.
     context.powerups[0].life = 0;
   }, TypeError);
   const oldX = context.self.x;
@@ -91,6 +101,7 @@ test('query helpers and their observations keep a consistent snapshot after the 
   assert.equal(path.at(-1), game.map.cells.length - 1);
   assert.equal(context.lineOfSight(context.self, context.enemies[0]), true);
   const prediction = context.predictShot(0);
+  assert.ok(prediction);
   assert.equal(prediction.id, 0);
   game.tanks[0].alive = false;
   game.map.walls.push({ x1: 200, y1: 0, x2: 200, y2: 512 });
@@ -101,11 +112,13 @@ test('query helpers and their observations keep a consistent snapshot after the 
 
 test('a newly registered class controls the game and keeps independent per-tank state', () => {
   class ForwardBot extends Bot {
+    decisions = 0;
+    lastContext: BotContext | null = null;
     constructor() {
       super({ reaction: 0.05, error: 0 });
       this.decisions = 0;
     }
-    decide(context) {
+    override decide(context: BotContext): BotDecision {
       this.decisions++;
       this.lastContext = context;
       return { steer: 0, throttle: 1, fire: true };
@@ -122,6 +135,7 @@ test('a newly registered class controls the game and keeps independent per-tank 
   const first = game.bots.get(1),
     second = game.bots.get(2);
   assert.ok(first instanceof ForwardBot);
+  assert.ok(second instanceof ForwardBot);
   assert.notEqual(first, second);
   game.state = 'playing';
   game.map.walls = game.map.walls.filter((w) => w.border);
@@ -132,19 +146,23 @@ test('a newly registered class controls the game and keeps independent per-tank 
   assert.ok(game.bullets.some((b) => b.owner === 1));
   assert.equal(first.decisions, 1);
   assert.equal(second.decisions, 1);
-  assert.equal(first.lastContext.self.id, 1);
-  assert.equal(second.lastContext.self.id, 2);
+  assert.equal(first.lastContext?.self.id, 1);
+  assert.equal(second.lastContext?.self.id, 2);
   game.prepareRound('new-round');
   assert.notEqual(game.bots.get(1), first);
-  assert.equal(game.bots.get(1).decisions, 0);
+  const next = game.bots.get(1);
+  assert.ok(next instanceof ForwardBot);
+  assert.equal(next.decisions, 0);
 });
 
 test('invalid controls are bounded and unknown saved types fall back to medium', () => {
   class BadControlsBot extends Bot {
-    decide() {
+    // @ts-expect-error Invalid firing controls are intentionally tested at runtime.
+    override decide() {
       return { steer: 99, throttle: NaN, fire: 'yes' };
     }
   }
+  // @ts-expect-error This malformed implementation exercises control sanitization.
   registerBot('test-controls', BadControlsBot);
   const game = new Game({ opponents: 1, difficulties: ['test-controls'] }, 'controls');
   game.think(game.tanks[1]);
@@ -155,7 +173,7 @@ test('invalid controls are bounded and unknown saved types fall back to medium',
     'medium',
     'medium',
   ]);
-  assert.equal(getBotType('easy').label, 'Easy');
+  assert.equal(getBotType('easy')?.label, 'Easy');
 });
 
 test('invalid custom movement profiles fail before entering the simulation', () => {
@@ -163,7 +181,7 @@ test('invalid custom movement profiles fail before entering the simulation', () 
     constructor() {
       super({ reaction: 0 });
     }
-    decide() {
+    override decide(): BotDecision {
       return {};
     }
   }
@@ -172,10 +190,12 @@ test('invalid custom movement profiles fail before entering the simulation', () 
 
 test('asynchronous bot decisions fail with an explicit contract error', () => {
   class AsyncBot extends Bot {
-    async decide() {
+    // @ts-expect-error Promise-returning decisions are intentionally rejected.
+    override async decide() {
       return {};
     }
   }
+  // @ts-expect-error This controller tests the runtime JavaScript boundary.
   registerBot('test-async', AsyncBot);
   const game = new Game({ opponents: 1, difficulties: ['test-async'] });
   assert.throws(() => game.think(game.tanks[1]), /synchronous movement decision/);

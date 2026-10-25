@@ -1,14 +1,19 @@
-import { angleDiff, clamp, distance } from '../math.js';
+import { angleDiff, clamp, distance } from '../math.ts';
+import type { BotContext, BotDecision, BotProfile } from './types.ts';
 
 // Shared existing strategy. Subclasses can reuse this, compose it with another
 // behavior, or implement decide() independently using the same observation API.
-export function decideCombat(context, profile, { dodge = false, bank = false } = {}) {
+export function decideCombat(
+  context: BotContext,
+  profile: Readonly<BotProfile>,
+  { dodge = false, bank = false }: { dodge?: boolean; bank?: boolean } = {},
+): BotDecision {
   const { self: tank, map, rules } = context;
   const enemies = [...context.enemies].sort((a, b) => distance(a, tank) - distance(b, tank));
   if (!enemies.length) return { steer: 0, throttle: 0, fire: false };
   const visible = enemies.find((target) => context.lineOfSight(tank, target));
   const target = visible || enemies[0];
-  let desired, throttle;
+  let desired: number, throttle: number;
   if (visible) {
     const lead = bank ? Math.min(0.22, distance(tank, target) / rules.shellSpeed) : 0;
     const predicted = { x: target.x + target.vx * lead, y: target.y + target.vy * lead };
@@ -53,7 +58,7 @@ export function decideCombat(context, profile, { dodge = false, bank = false } =
     }
   }
   if (dodge) {
-    let danger = null,
+    let danger: BotContext['bullets'][number] | null = null,
       minThreat = 65;
     for (const bullet of context.bullets) {
       if (bullet.owner === tank.id && bullet.bounces === 0) continue;

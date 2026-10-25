@@ -1,14 +1,32 @@
-import { CELL } from './engine.js';
-import { TANK_SHAPES, SHELL_RADIUS, WALL_RADIUS } from './geometry.js';
+import { CELL } from './engine.ts';
+import { TANK_SHAPES, SHELL_RADIUS, WALL_RADIUS } from './geometry.ts';
+import type { Game } from './engine.ts';
+import type { GameMap, Tank, Powerup } from './types.ts';
 
-export function tankIcon(color, className = '') {
+function canvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas 2D is required to render the game.');
+  return context;
+}
+
+export function tankIcon(color: string, className = ''): string {
   return `<svg class="${className}" viewBox="0 0 32 36" aria-hidden="true"><rect x="3" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="23" y="10" width="6" height="24" rx="2" fill="${color}"/><rect x="10" y="13" width="12" height="18" rx="3" fill="${color}"/><circle cx="16" cy="20" r="5" fill="${color}" stroke="#f6f5ef" stroke-width="1"/><rect x="14" y="2" width="4" height="18" rx="1" fill="${color}"/></svg>`;
 }
 
 export class Renderer {
-  constructor(canvas) {
+  readonly canvas: HTMLCanvasElement;
+  readonly ctx: CanvasRenderingContext2D;
+  readonly reducedMotion: boolean;
+  readonly observer: ResizeObserver;
+  width = 0;
+  height = 0;
+  dpr = 1;
+  cachedMap: GameMap | null = null;
+  floor = document.createElement('canvas');
+
+  constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    this.ctx = canvasContext(canvas);
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(canvas);
@@ -24,7 +42,7 @@ export class Renderer {
     this.canvas.height = Math.round(rect.height * dpr);
     this.cachedMap = null;
   }
-  draw(game, time) {
+  draw(game: Game, time: number) {
     if (!this.width || !this.height) return;
     const ctx = this.ctx,
       { map } = game;
@@ -116,11 +134,11 @@ export class Renderer {
       ctx.fillText('YOU’RE OUT · WATCH THE TROUBLE', this.width / 2, this.height - 13);
     }
   }
-  cacheMap(map) {
+  cacheMap(map: GameMap) {
     const floor = document.createElement('canvas');
     floor.width = map.width + 16;
     floor.height = map.height + 16;
-    const ctx = floor.getContext('2d');
+    const ctx = canvasContext(floor);
     ctx.translate(8, 8);
     ctx.fillStyle = '#e1e7cf';
     ctx.fillRect(0, 0, map.width, map.height);
@@ -149,7 +167,7 @@ export class Renderer {
     }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    const walls = (color, width, yOffset) => {
+    const walls = (color: string, width: number, yOffset: number) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.beginPath();
@@ -173,7 +191,7 @@ export class Renderer {
     this.floor = floor;
     this.cachedMap = map;
   }
-  drawTank(tank, time, game) {
+  drawTank(tank: Tank, time: number, game: Game) {
     const ctx = this.ctx;
     if (tank.id === 0) {
       ctx.strokeStyle = '#376b4840';
@@ -253,12 +271,12 @@ export class Renderer {
       }
     }
   }
-  roundRect(x, y, w, h, r) {
+  roundRect(x: number, y: number, w: number, h: number, r: number) {
     this.ctx.beginPath();
     this.ctx.roundRect(x, y, w, h, r);
     this.ctx.fill();
   }
-  drawPowerup(p, time) {
+  drawPowerup(p: Powerup, time: number) {
     const ctx = this.ctx,
       symbols = { shield: '◇', rapid: 'ϟ', scatter: '⋔' };
     if (p.life < 3 && Math.sin(time * 12) < 0) return;

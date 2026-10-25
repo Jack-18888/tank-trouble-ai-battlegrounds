@@ -5,7 +5,40 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+interface BrowserTarget {
+  type: string;
+  webSocketDebuggerUrl: string;
+}
+interface ExceptionDetails {
+  text: string;
+  exception?: { description?: string };
+}
+interface CdpMessage {
+  id?: number;
+  result?: unknown;
+  error?: { message: string };
+  method?: string;
+  params?: { exceptionDetails?: ExceptionDetails; entry?: { level: string; text: string } };
+}
+interface EvaluateResponse {
+  result: { value?: unknown };
+  exceptionDetails?: ExceptionDetails;
+}
+interface CornerResult {
+  fired: boolean;
+  alive: boolean;
+  bounces: number;
+  blocked: boolean;
+  x: number;
+}
+interface TurnResult {
+  clear: boolean;
+  x: number;
+  y: number;
+  angle: number;
+}
+const preview = process.argv.includes('--preview');
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const chrome =
   process.env.CHROME_PATH ||
   [
@@ -31,28 +64,45 @@ const browser = spawn(
 let browserLog = '';
 browser.stderr.on('data', (chunk) => (browserLog += chunk.toString()));
 browser.on('error', (e) => (browserLog += e.message));
-let ws,
+let ws: WebSocket | undefined,
   next = 0;
-const calls = new Map(),
-  errors = [];
+const calls = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (reason: Error) => void }
+  >(),
+  errors: string[] = [];
 try {
-  let targets;
+  let targets: BrowserTarget[] | undefined;
   for (let i = 0; i < 50; i++) {
     try {
-      targets = await (await fetch('http://127.0.0.1:9333/json')).json();
+      const data: unknown = await (await fetch('http://127.0.0.1:9333/json')).json();
+      if (!Array.isArray(data)) throw new Error('Invalid Chromium target list');
+      targets = data.filter(
+        (target: unknown): target is BrowserTarget =>
+          typeof target === 'object' &&
+          target !== null &&
+          'type' in target &&
+          typeof target.type === 'string' &&
+          'webSocketDebuggerUrl' in target &&
+          typeof target.webSocketDebuggerUrl === 'string',
+      );
       break;
     } catch {
       await delay(100);
     }
   }
   assert.ok(targets?.length, `Chromium did not start: ${browserLog}`);
-  ws = new WebSocket(targets.find((t) => t.type === 'page').webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = reject;
+  const target = targets.find((t) => t.type === 'page');
+  assert.ok(target, 'Chromium did not create a page target');
+  const socket = new WebSocket(target.webSocketDebuggerUrl);
+  ws = socket;
+  await new Promise<void>((resolve, reject) => {
+    socket.onopen = () => resolve();
+    socket.onerror = reject;
   });
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
+  socket.onmessage = (e) => {
+    if (typeof e.data !== 'string') return;
+    const m = JSON.parse(e.data) as CdpMessage;
     if (m.id) {
       const call = calls.get(m.id);
       calls.delete(m.id);
@@ -61,35 +111,37 @@ try {
     }
     if (m.method === 'Runtime.exceptionThrown')
       errors.push(
-        m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text,
+        m.params?.exceptionDetails?.exception?.description ||
+          m.params?.exceptionDetails?.text ||
+          'Unknown browser exception',
       );
-    if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error')
+    if (m.method === 'Log.entryAdded' && m.params?.entry?.level === 'error')
       errors.push(m.params.entry.text);
   };
-  const cdp = (method, params = {}) =>
-    new Promise((resolve, reject) => {
+  const cdp = <T = unknown>(method: string, params: object = {}): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
       const id = ++next;
-      calls.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ id, method, params }));
+      calls.set(id, { resolve: (value) => resolve(value as T), reject });
+      socket.send(JSON.stringify({ id, method, params }));
     });
-  const evaluate = async (expression) => {
-    const r = await cdp('Runtime.evaluate', {
+  const evaluate = async <T = unknown>(expression: string): Promise<T> => {
+    const r = await cdp<EvaluateResponse>('Runtime.evaluate', {
       expression,
       awaitPromise: true,
       returnByValue: true,
     });
     if (r.exceptionDetails)
       throw Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
-    return r.result.value;
+    return r.result.value as T;
   };
-  const click = (id) => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
-  const screenshot = async (name) => {
-    const r = await cdp('Page.captureScreenshot', { format: 'png' });
-    await writeFile(`.qa/${name}.png`, Buffer.from(r.data, 'base64'));
+  const click = (id: string) => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  const screenshot = async (name: string) => {
+    const r = await cdp<{ data: string }>('Page.captureScreenshot', { format: 'png' });
+    await writeFile(`.qa/${preview ? 'preview-' : ''}${name}.png`, Buffer.from(r.data, 'base64'));
   };
-  const size = (width, height, mobile = false) =>
+  const size = (width: number, height: number, mobile = false) =>
     cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
-  const key = (key, code, type = 'keyDown', modifiers = 0) =>
+  const key = (key: string, code: string, type = 'keyDown', modifiers = 0) =>
     cdp('Input.dispatchKeyEvent', {
       type,
       key,
@@ -208,10 +260,11 @@ try {
     await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`),
     muted,
   );
-  // A registered implementation should be usable through setup without a
-  // special-case engine branch or a hand-maintained list of UI choices.
-  await evaluate(`(async () => {
-    const {Bot,registerBot} = await import('/src/bots/index.js');
+  if (!preview) {
+    // A registered implementation should be usable through setup without a
+    // special-case engine branch or a hand-maintained list of UI choices.
+    await evaluate(`(async () => {
+    const {Bot,registerBot} = await import('/src/bots/index.ts');
     window.__customBotCalls=0;
     class BrowserTestBot extends Bot {
       decide(context) {
@@ -222,38 +275,38 @@ try {
     }
     registerBot('browser-custom',BrowserTestBot,{label:'Custom',tagline:'CUSTOM STRATEGY'});
   })()`);
-  await click('opponent-minus');
-  assert.equal(await evaluate(`document.querySelectorAll('#difficulty button').length`), 4);
-  assert.equal(
-    await evaluate(
-      `Array.from(document.querySelectorAll('[data-bot]')).every(s=>Array.from(s.options).some(o=>o.value==='browser-custom'))`,
-    ),
-    true,
-  );
-  await evaluate(`document.querySelector('#difficulty [data-value="browser-custom"]').click()`);
-  assert.equal(
-    await evaluate(`document.getElementById('difficulty-status').textContent`),
-    'CUSTOM STRATEGY',
-  );
-  await click('start-button');
-  await delay(2900);
-  assert.ok(await evaluate(`window.__customBotCalls>0`));
-  await screenshot('custom-bot-playing');
-  await click('pause-button');
-  await size(390, 844, true);
-  await delay(100);
-  assert.equal(
-    await evaluate(`document.documentElement.scrollWidth>innerWidth`),
-    false,
-    'custom bot choices overflow mobile layout',
-  );
-  await size(1440, 900, false);
-  await delay(100);
-  await evaluate(`document.querySelector('[data-action="quit"]').click()`);
-  // Exercise the actual engine and renderer in the reported wall-edge pose.
-  // This fixture exists only in the isolated QA browser, not in the game UI.
-  const corner = await evaluate(`(async () => {
-    const [{Game}, {Renderer}, geometry] = await Promise.all([import('/src/engine.js'), import('/src/renderer.js'), import('/src/geometry.js')]);
+    await click('opponent-minus');
+    assert.equal(await evaluate(`document.querySelectorAll('#difficulty button').length`), 4);
+    assert.equal(
+      await evaluate(
+        `Array.from(document.querySelectorAll('[data-bot]')).every(s=>Array.from(s.options).some(o=>o.value==='browser-custom'))`,
+      ),
+      true,
+    );
+    await evaluate(`document.querySelector('#difficulty [data-value="browser-custom"]').click()`);
+    assert.equal(
+      await evaluate(`document.getElementById('difficulty-status').textContent`),
+      'CUSTOM STRATEGY',
+    );
+    await click('start-button');
+    await delay(2900);
+    assert.ok(await evaluate(`window.__customBotCalls>0`));
+    await screenshot('custom-bot-playing');
+    await click('pause-button');
+    await size(390, 844, true);
+    await delay(100);
+    assert.equal(
+      await evaluate(`document.documentElement.scrollWidth>innerWidth`),
+      false,
+      'custom bot choices overflow mobile layout',
+    );
+    await size(1440, 900, false);
+    await delay(100);
+    await evaluate(`document.querySelector('[data-action="quit"]').click()`);
+    // Exercise the actual engine and renderer in the reported wall-edge pose.
+    // This fixture exists only in the isolated QA browser, not in the game UI.
+    const corner = await evaluate<CornerResult>(`(async () => {
+    const [{Game}, {Renderer}, geometry] = await Promise.all([import('/src/engine.ts'), import('/src/renderer.ts'), import('/src/geometry.ts')]);
     const g = new Game({opponents:1,powerups:false}, 'browser-corner');
     const edge = {x1:32,y1:96,x2:128,y2:96};
     g.map = {...g.map, cols:4, rows:3, width:256, height:192, walls:[edge], cells:g.map.cells.filter(c=>c.x<4&&c.y<3)};
@@ -269,15 +322,15 @@ try {
     painter.draw(g,0);
     return {fired,alive:tank.alive,bounces:g.bullets[0]?.bounces,blocked:geometry.tankWall({...tank,x:tank.x-1},edge),x:tank.x};
   })()`);
-  assert.equal(corner.fired, true);
-  assert.equal(corner.alive, true);
-  assert.equal(corner.bounces, 0);
-  assert.equal(corner.blocked, true);
-  await delay(100);
-  // ResizeObserver clears its canvas while adjusting backing resolution.
-  await evaluate(`window.__cornerQa.painter.draw(window.__cornerQa.g,0)`);
-  await screenshot('wall-edge-fixed');
-  const turnStart = await evaluate(`(() => {
+    assert.equal(corner.fired, true);
+    assert.equal(corner.alive, true);
+    assert.equal(corner.bounces, 0);
+    assert.equal(corner.blocked, true);
+    await delay(100);
+    // ResizeObserver clears its canvas while adjusting backing resolution.
+    await evaluate(`window.__cornerQa.painter.draw(window.__cornerQa.g,0)`);
+    await screenshot('wall-edge-fixed');
+    const turnStart = await evaluate<TurnResult & { naiveBlocked: boolean }>(`(() => {
     const {g,painter}=window.__cornerQa;
     g.map={...g.map,walls:[{x1:122,y1:16,x2:122,y2:176}]};
     Object.assign(g.tanks[0],{x:100,y:100,angle:-Math.PI/3,alive:true});
@@ -290,10 +343,10 @@ try {
     painter.draw(g,0);
     return {clear:g.canPlaceTank(tank),naiveBlocked,x:tank.x,y:tank.y,angle:tank.angle};
   })()`);
-  assert.equal(turnStart.clear, true);
-  assert.equal(turnStart.naiveBlocked, true, 'fixture must recreate the blocked in-place turn');
-  await screenshot('wall-turn-before');
-  const turnEnd = await evaluate(`(() => {
+    assert.equal(turnStart.clear, true);
+    assert.equal(turnStart.naiveBlocked, true, 'fixture must recreate the blocked in-place turn');
+    await screenshot('wall-turn-before');
+    const turnEnd = await evaluate<TurnResult>(`(() => {
     const {g,painter}=window.__cornerQa;
     let clear=true;
     for(let i=0;i<40;i++){
@@ -307,11 +360,12 @@ try {
     painter.draw(g,1/3);
     return {clear,x:tank.x,y:tank.y,angle:tank.angle};
   })()`);
-  assert.equal(turnEnd.clear, true);
-  assert.ok(Math.abs(turnEnd.angle - turnStart.angle - 3.7 / 3) < 1e-8);
-  assert.ok(turnEnd.x < turnStart.x && turnEnd.x > turnStart.x - 8);
-  assert.ok(Math.abs(turnEnd.y - turnStart.y) < 1e-8);
-  await screenshot('wall-turn-after');
+    assert.equal(turnEnd.clear, true);
+    assert.ok(Math.abs(turnEnd.angle - turnStart.angle - 3.7 / 3) < 1e-8);
+    assert.ok(turnEnd.x < turnStart.x && turnEnd.x > turnStart.x - 8);
+    assert.ok(Math.abs(turnEnd.y - turnStart.y) < 1e-8);
+    await screenshot('wall-turn-after');
+  }
   assert.deepEqual(errors, [], 'browser logged errors');
   console.log(
     JSON.stringify(
@@ -330,9 +384,13 @@ try {
           '390 / 768 / 1100 / 1440 layouts',
           'touch controls',
           'saved preferences',
-          'registered custom bot appears in setup and controls a live opponent',
-          'wall-edge firing regression',
-          'right steering at wall contact with no silhouette overlap',
+          ...(!preview
+            ? [
+                'registered custom bot appears in setup and controls a live opponent',
+                'wall-edge firing regression',
+                'right steering at wall contact with no silhouette overlap',
+              ]
+            : ['compiled production bundle']),
           'no runtime errors',
         ],
         screenshots: path.resolve('.qa'),

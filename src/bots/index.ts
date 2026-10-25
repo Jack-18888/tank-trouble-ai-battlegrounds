@@ -1,11 +1,12 @@
-import { EasyBot } from './easy-bot.js';
-import { MediumBot } from './medium-bot.js';
-import { HardBot } from './hard-bot.js';
-import { registerBot } from './registry.js';
+import { EasyBot } from './easy-bot.ts';
+import { MediumBot } from './medium-bot.ts';
+import { HardBot } from './hard-bot.ts';
+import { registerBot } from './registry.ts';
 
-export { Bot } from './bot.js';
+export { Bot } from './bot.ts';
+export type { BotContext, BotDecision, BotProfile, BotMetadata, BotConstructor } from './types.ts';
 export { EasyBot, MediumBot, HardBot };
-export { registerBot, createBot, getBotType, getBotTypes, hasBot } from './registry.js';
+export { registerBot, createBot, getBotType, getBotTypes, hasBot } from './registry.ts';
 
 // Add custom class imports and registrations here to make them available both
 // in match configuration and in the setup UI. No engine changes are needed.

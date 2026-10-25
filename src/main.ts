@@ -1,18 +1,44 @@
-import { Game, DEFAULT_CONFIG, COLORS, NAMES } from './engine.js';
-import { getBotType, getBotTypes, hasBot } from './bots/index.js';
-import { Renderer, tankIcon } from './renderer.js';
-import { Sound } from './audio.js';
+import { Game, DEFAULT_CONFIG, COLORS, NAMES, validateGameConfig } from './engine.ts';
+import { getBotType, getBotTypes, hasBot } from './bots/index.ts';
+import { Renderer, tankIcon } from './renderer.ts';
+import { Sound } from './audio.ts';
 
-const $ = (id) => document.getElementById(id);
-const escapeHTML = (value) =>
-  value.replace(
-    /[&<>"']/g,
-    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
-  );
+interface Controls {
+  arena: HTMLCanvasElement;
+  'map-size': HTMLSelectElement;
+  'maze-density': HTMLSelectElement;
+  'win-target': HTMLSelectElement;
+  powerups: HTMLInputElement;
+  'pause-button': HTMLButtonElement;
+  'opponent-minus': HTMLButtonElement;
+  'opponent-plus': HTMLButtonElement;
+  'help-dialog': HTMLDialogElement;
+}
+function $<K extends keyof Controls>(id: K): Controls[K];
+function $(id: string): HTMLElement;
+function $(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing game element #${id}`);
+  return element;
+}
+const entities: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+const escapeHTML = (value: string) => value.replace(/[&<>"']/g, (char) => entities[char]);
 const storageKey = 'tank-trouble.preferences.v1';
-let saved = {};
+let saved = { config: DEFAULT_CONFIG, sound: true };
 try {
-  saved = JSON.parse(localStorage.getItem(storageKey) || '{}') || {};
+  const raw: unknown = JSON.parse(localStorage.getItem(storageKey) || '{}');
+  if (raw && typeof raw === 'object') {
+    saved = {
+      config: validateGameConfig('config' in raw ? raw.config : undefined),
+      sound: !('sound' in raw && raw.sound === false),
+    };
+  }
 } catch {
   /* Private browsing can disable storage. */
 }
@@ -20,7 +46,7 @@ const config = new Game({ ...DEFAULT_CONFIG, ...saved.config }).config;
 let game = new Game(config);
 const renderer = new Renderer($('arena'));
 const sound = new Sound(saved.sound !== false);
-const keys = new Set();
+const keys = new Set<string>();
 let accumulator = 0,
   previousTime = 0,
   toastUntil = 0,
@@ -54,7 +80,7 @@ function scoreboard() {
   $('scoreboard').innerHTML = game.tanks
     .map(
       (t) =>
-        `<div class="score-card ${t.alive ? '' : 'eliminated'}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === 0 ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.id === 0 ? 'THE HUMAN' : escapeHTML(getBotType(t.difficulty).label) + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
+        `<div class="score-card ${t.alive ? '' : 'eliminated'}" style="color:${t.color}">${tankIcon(t.color, 'score-tank')}<span class="score-info"><span class="score-name">${t.name}${t.id === 0 ? ' <span style="opacity:.5">/ P1</span>' : ''}</span><span class="score-sub">${t.id === 0 ? 'THE HUMAN' : escapeHTML(getBotType(t.difficulty)?.label ?? t.difficulty ?? 'Bot') + ' BOT'}</span></span><span class="score-number">${game.scores[t.id]}</span></div>`,
     )
     .join('');
 }
@@ -67,12 +93,12 @@ function settingsUI() {
       return button;
     }),
   );
-  $('opponent-count').textContent = config.opponents;
+  $('opponent-count').textContent = String(config.opponents);
   $('opponent-minus').disabled = config.opponents <= 1;
   $('opponent-plus').disabled = config.opponents >= 5;
   $('map-size').value = config.size;
   $('maze-density').value = config.density;
-  $('win-target').value = config.target;
+  $('win-target').value = String(config.target);
   $('powerups').checked = config.powerups;
   const mixed = new Set(config.difficulties).size > 1;
   for (const button of $('difficulty').querySelectorAll('button')) {
@@ -81,6 +107,7 @@ function settingsUI() {
     button.setAttribute('aria-pressed', String(selected));
   }
   const type = getBotType(defaultDifficulty);
+  if (!type) throw new Error(`Missing bot metadata for ${defaultDifficulty}`);
   const [label, description] = mixed
     ? ['MIXED COMPANY', 'A handpicked mix. Something for every opponent.']
     : [type.tagline, type.description];
@@ -117,12 +144,12 @@ function mapUI() {
   $('map-seed').textContent = game.map.seed;
   $('canvas-wrap').style.aspectRatio = `${game.map.cols} / ${game.map.rows}`;
 }
-function toast(message, duration = 2200) {
+function toast(message: string, duration = 2200) {
   $('round-toast').textContent = message;
   $('round-toast').classList.add('visible');
   toastUntil = performance.now() + duration;
 }
-function showOverlay(html, countdown = false) {
+function showOverlay(html: string, countdown = false) {
   $('overlay-content').classList.toggle('countdown', countdown);
   $('overlay-content').innerHTML = html;
   $('overlay').classList.remove('hidden');
@@ -218,7 +245,10 @@ function pause() {
 
 $('start-button').addEventListener('click', start);
 $('overlay').addEventListener('click', (e) => {
-  const action = e.target.closest('[data-action]')?.dataset.action;
+  const action =
+    e.target instanceof Element
+      ? e.target.closest<HTMLElement>('[data-action]')?.dataset.action
+      : undefined;
   if (action === 'start') start();
   if (action === 'resume') {
     sound.unlock();
@@ -255,13 +285,14 @@ $('opponent-plus').addEventListener('click', () => {
   }
 });
 $('difficulty').addEventListener('click', (e) => {
-  const level = e.target.dataset.value;
+  const level = e.target instanceof HTMLElement ? e.target.dataset.value : undefined;
   if (!hasBot(level)) return;
   defaultDifficulty = level;
   config.difficulties.fill(level);
   setupChanged();
 });
 $('bot-roster').addEventListener('change', (e) => {
+  if (!(e.target instanceof HTMLSelectElement)) return;
   if (!hasBot(e.target.value)) return;
   config.difficulties[Number(e.target.dataset.bot)] = e.target.value;
   defaultDifficulty = config.difficulties[0];
@@ -272,14 +303,15 @@ for (const [id, field] of [
   ['maze-density', 'density'],
   ['win-target', 'target'],
   ['powerups', 'powerups'],
-]) {
-  $(id).addEventListener('change', (e) => {
-    config[field] =
+] as const) {
+  $(id).addEventListener('change', () => {
+    const value =
       field === 'powerups'
-        ? e.target.checked
+        ? $('powerups').checked
         : field === 'target'
-          ? Number(e.target.value)
-          : e.target.value;
+          ? Number($(id).value)
+          : $(id).value;
+    Object.assign(config, validateGameConfig({ ...config, [field]: value }));
     setupChanged();
   });
 }
@@ -304,10 +336,11 @@ $('help-button').addEventListener('click', openHelp);
 for (const id of ['close-help', 'got-it'])
   $(id).addEventListener('click', () => $('help-dialog').close());
 $('help-dialog').addEventListener('click', (e) => {
-  if (e.target === $('help-dialog')) {
-    const r = e.target.getBoundingClientRect();
+  const dialog = $('help-dialog');
+  if (e.target === dialog) {
+    const r = dialog.getBoundingClientRect();
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
-      e.target.close();
+      dialog.close();
   }
 });
 $('help-dialog').addEventListener('close', () => {
@@ -327,7 +360,11 @@ const gameKeys = new Set([
   'Space',
 ]);
 window.addEventListener('keydown', (e) => {
-  if ($('help-dialog').open || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (
+    $('help-dialog').open ||
+    (e.target instanceof Element && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName))
+  )
+    return;
   if (e.code === 'Escape' || e.code === 'KeyP') {
     if (!e.repeat) pause();
     e.preventDefault();
@@ -349,16 +386,18 @@ document.addEventListener('visibilitychange', () => {
     if (['playing', 'countdown', 'roundOver'].includes(game.state)) pause();
   }
 });
-for (const button of document.querySelectorAll('[data-key]')) {
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]')) {
+  const key = button.dataset.key;
+  if (!key) continue;
   button.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     sound.unlock();
     button.setPointerCapture(e.pointerId);
-    keys.add(button.dataset.key);
+    keys.add(key);
     button.classList.add('active');
   });
   const release = () => {
-    keys.delete(button.dataset.key);
+    keys.delete(key);
     button.classList.remove('active');
   };
   button.addEventListener('pointerup', release);
@@ -374,7 +413,7 @@ const notes = [
 ];
 function handleEvents() {
   for (const event of game.drainEvents()) {
-    sound.play(event.type, event);
+    sound.play(event);
     if (event.type === 'state') stateUI();
     if (event.type === 'score') scoreboard();
     if (event.type === 'map') {
@@ -406,7 +445,7 @@ function handleEvents() {
       );
   }
 }
-function frame(time) {
+function frame(time: number) {
   const elapsed = Math.min((time - (previousTime || time)) / 1000, 0.1);
   previousTime = time;
   accumulator += elapsed;

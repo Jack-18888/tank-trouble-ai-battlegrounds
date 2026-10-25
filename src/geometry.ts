@@ -1,30 +1,44 @@
 // Shared by the renderer and physics. Coordinates are local to the tank,
 // with the barrel pointing along +x. Each shape is a rounded rectangle.
+import type { CollisionHit, Rect, RoundedRect, TankPose, Wall, WallContact } from './types.ts';
+
 export const TANK_SHAPES = [
   { x: -16, y: -14, w: 31, h: 7, r: 2 },
   { x: -16, y: 7, w: 31, h: 7, r: 2 },
   { x: -13, y: -9, w: 26, h: 18, r: 3 },
   { x: 0, y: -3, w: 25, h: 6, r: 1.3 },
-];
+] as const satisfies readonly RoundedRect[];
 export const BARREL_LENGTH = TANK_SHAPES[3].x + TANK_SHAPES[3].w;
 export const WALL_RADIUS = 3;
 export const SHELL_RADIUS = 2.7;
 export const TANK_BOUND_RADIUS = 26;
 const EPS = 1e-8;
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const core = (s) => ({ x: s.x + s.r, y: s.y + s.r, w: s.w - 2 * s.r, h: s.h - 2 * s.r });
+const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
+const core = (s: RoundedRect): Rect => ({
+  x: s.x + s.r,
+  y: s.y + s.r,
+  w: s.w - 2 * s.r,
+  h: s.h - 2 * s.r,
+});
 const cores = TANK_SHAPES.map(core);
 
-function pointSegmentDistanceSq(x, y, ax, ay, bx, by) {
+function pointSegmentDistanceSq(
+  x: number,
+  y: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
   const dx = bx - ax,
     dy = by - ay;
   const t = clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
   return (x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2;
 }
-function pointBoxDistanceSq(x, y, box) {
+function pointBoxDistanceSq(x: number, y: number, box: Rect): number {
   return (x - clamp(x, box.x, box.x + box.w)) ** 2 + (y - clamp(y, box.y, box.y + box.h)) ** 2;
 }
-function corners(box) {
+function corners(box: Rect): [number, number][] {
   return [
     [box.x, box.y],
     [box.x + box.w, box.y],
@@ -33,13 +47,20 @@ function corners(box) {
   ];
 }
 
-function sweepBox(x, y, dx, dy, box, inside = false) {
+function sweepBox(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  box: Rect,
+  inside = false,
+): CollisionHit | null {
   if (inside && pointBoxDistanceSq(x, y, box) === 0) return { t: 0, nx: 0, ny: 0 };
   let enter = -Infinity,
     leave = Infinity,
     nx = 0,
     ny = 0;
-  for (const axis of ['x', 'y']) {
+  for (const axis of ['x', 'y'] as const) {
     const p = axis === 'x' ? x : y,
       d = axis === 'x' ? dx : dy;
     const min = box[axis],
@@ -60,7 +81,16 @@ function sweepBox(x, y, dx, dy, box, inside = false) {
   }
   return enter <= leave && enter >= -EPS && enter <= 1 ? { t: Math.max(0, enter), nx, ny } : null;
 }
-function sweepCircle(x, y, dx, dy, cx, cy, radius, inside = false) {
+function sweepCircle(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  cx: number,
+  cy: number,
+  radius: number,
+  inside = false,
+): CollisionHit | null {
   const ox = x - cx,
     oy = y - cy,
     a = dx * dx + dy * dy;
@@ -76,12 +106,21 @@ function sweepCircle(x, y, dx, dy, cx, cy, radius, inside = false) {
     ny = (oy + dy * t) / radius;
   return dx * nx + dy * ny < -EPS || inside ? { t: Math.max(0, t), nx, ny } : null;
 }
-function earliest(hits) {
-  return hits.filter(Boolean).reduce((best, hit) => (!best || hit.t < best.t ? hit : best), null);
+function earliest(hits: (CollisionHit | null)[]): CollisionHit | null {
+  return hits
+    .filter((hit): hit is CollisionHit => hit !== null)
+    .reduce<CollisionHit | null>((best, hit) => (!best || hit.t < best.t ? hit : best), null);
 }
 
 // A rendered wall is a capsule: a line segment with round end caps.
-export function sweepWall(x, y, dx, dy, wall, radius = SHELL_RADIUS) {
+export function sweepWall(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  wall: Readonly<Wall>,
+  radius = SHELL_RADIUS,
+): CollisionHit | null {
   const r = WALL_RADIUS + radius;
   const minX = Math.min(wall.x1, wall.x2),
     minY = Math.min(wall.y1, wall.y2);
@@ -94,7 +133,7 @@ export function sweepWall(x, y, dx, dy, wall, radius = SHELL_RADIUS) {
     sweepCircle(x, y, dx, dy, wall.x2, wall.y2, r),
   ]);
 }
-function segmentBoxDistanceSq(ax, ay, bx, by, box) {
+function segmentBoxDistanceSq(ax: number, ay: number, bx: number, by: number, box: Rect): number {
   if (sweepBox(ax, ay, bx - ax, by - ay, box, true)) return 0;
   return Math.min(
     pointBoxDistanceSq(ax, ay, box),
@@ -102,11 +141,32 @@ function segmentBoxDistanceSq(ax, ay, bx, by, box) {
     ...corners(box).map(([x, y]) => pointSegmentDistanceSq(x, y, ax, ay, bx, by)),
   );
 }
-function closestSegmentBox(ax, ay, bx, by, box) {
+interface ClosestPoints {
+  distance: number;
+  wallX: number;
+  wallY: number;
+  bodyX: number;
+  bodyY: number;
+}
+function closestSegmentBox(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  box: Rect,
+): ClosestPoints {
   const crossing = sweepBox(ax, ay, bx - ax, by - ay, box, true);
-  if (crossing) return { distance: 0 };
-  let closest = null;
-  const consider = (wallX, wallY, bodyX, bodyY) => {
+  if (crossing) return { distance: 0, wallX: ax, wallY: ay, bodyX: ax, bodyY: ay };
+  const initialX = clamp(ax, box.x, box.x + box.w),
+    initialY = clamp(ay, box.y, box.y + box.h);
+  let closest: ClosestPoints = {
+    wallX: ax,
+    wallY: ay,
+    bodyX: initialX,
+    bodyY: initialY,
+    distance: Math.hypot(initialX - ax, initialY - ay),
+  };
+  const consider = (wallX: number, wallY: number, bodyX: number, bodyY: number) => {
     const distance = Math.hypot(bodyX - wallX, bodyY - wallY);
     if (!closest || distance < closest.distance) closest = { wallX, wallY, bodyX, bodyY, distance };
   };
@@ -124,20 +184,20 @@ function closestSegmentBox(ax, ay, bx, by, box) {
   }
   return closest;
 }
-function localPoint(tank, x, y) {
+function localPoint(tank: Readonly<TankPose>, x: number, y: number): [number, number] {
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle),
     dx = x - tank.x,
     dy = y - tank.y;
   return [dx * c + dy * s, -dx * s + dy * c];
 }
-function worldPoint(tank, x, y) {
+function worldPoint(tank: Readonly<TankPose>, x: number, y: number): [number, number] {
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle);
   return [tank.x + x * c - y * s, tank.y + x * s + y * c];
 }
 
-export function tankWall(tank, wall) {
+export function tankWall(tank: Readonly<TankPose>, wall: Readonly<Wall>): boolean {
   if (
     pointSegmentDistanceSq(tank.x, tank.y, wall.x1, wall.y1, wall.x2, wall.y2) >
     (TANK_BOUND_RADIUS + WALL_RADIUS) ** 2
@@ -154,13 +214,16 @@ export function tankWall(tank, wall) {
 // Small rotations can sweep a track corner or barrel into a wall even though
 // the starting pose is clear. Return the exact separation needed for that
 // contact; the simulation limits and validates any resulting displacement.
-export function tankWallContact(tank, wall) {
+export function tankWallContact(
+  tank: Readonly<TankPose>,
+  wall: Readonly<Wall>,
+): WallContact | null {
   if (!tankWall(tank, wall)) return null;
   const [ax, ay] = localPoint(tank, wall.x1, wall.y1),
     [bx, by] = localPoint(tank, wall.x2, wall.y2);
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle);
-  let deepest = null;
+  let deepest: WallContact | null = null;
   for (let i = 0; i < cores.length; i++) {
     const closest = closestSegmentBox(ax, ay, bx, by, cores[i]);
     const depth = WALL_RADIUS + TANK_SHAPES[i].r - closest.distance;
@@ -175,7 +238,7 @@ export function tankWallContact(tank, wall) {
   return deepest;
 }
 
-export function tanksOverlap(a, b) {
+export function tanksOverlap(a: Readonly<TankPose>, b: Readonly<TankPose>): boolean {
   if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 >= (TANK_BOUND_RADIUS * 2) ** 2) return false;
   for (let i = 0; i < cores.length; i++) {
     const box = cores[i];
@@ -201,13 +264,20 @@ export function tanksOverlap(a, b) {
 }
 
 // Sweep a shell against the same rounded tracks, hull, and barrel we draw.
-export function sweepTank(x, y, dx, dy, tank, radius = SHELL_RADIUS) {
+export function sweepTank(
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  tank: Readonly<TankPose>,
+  radius = SHELL_RADIUS,
+): number | null {
   const [lx, ly] = localPoint(tank, x, y);
   const c = Math.cos(tank.angle),
     s = Math.sin(tank.angle);
   const vx = dx * c + dy * s,
     vy = -dx * s + dy * c;
-  let first = null;
+  let first: number | null = null;
   for (let i = 0; i < cores.length; i++) {
     const box = cores[i],
       r = TANK_SHAPES[i].r + radius;
@@ -221,7 +291,10 @@ export function sweepTank(x, y, dx, dy, tank, radius = SHELL_RADIUS) {
   return first;
 }
 
-export function muzzlePosition(tank, angle = tank.angle) {
+export function muzzlePosition(
+  tank: Readonly<TankPose>,
+  angle = tank.angle,
+): { x: number; y: number } {
   const length = BARREL_LENGTH + SHELL_RADIUS + 0.05;
   return { x: tank.x + Math.cos(angle) * length, y: tank.y + Math.sin(angle) * length };
 }
