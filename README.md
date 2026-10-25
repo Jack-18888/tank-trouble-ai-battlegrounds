@@ -64,7 +64,8 @@ Match play runs locally, and preferences use browser local storage. There are no
 
 ## Source layout
 
-- `src/engine.js`: DOM-free simulation, seeded maze generation, pathfinding, bot decisions, swept projectile collisions, power-ups, and match state.
+- `src/engine.js`: DOM-free simulation, seeded maze generation, pathfinding, bot observations and control application, swept projectile collisions, power-ups, and match state.
+- `src/bots/`: abstract bot contract, Easy/Medium/Hard implementations, shared combat strategy, and the registry used by the game and setup UI.
 - `src/renderer.js`: cached maze rendering, tanks, shells, tracks, and particles.
 - `src/geometry.js`: shared tank silhouettes and exact rounded-wall collision geometry.
 - `src/main.js`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
@@ -72,6 +73,9 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `src/style.css`: responsive arcade interface and reduced-motion support.
 - `tests/engine.test.js`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
 - `tests/collision-regressions.test.js`: wall-edge firing, muzzle clearance, rotated hitboxes, rounded wall caps, and relative shell/tank travel speed.
+- `tests/bots.test.js`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
+
+To add a strategy, extend `Bot`, implement `decide(context)`, and register it in `src/bots/index.js`. It becomes selectable in match setup automatically. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 

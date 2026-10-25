@@ -208,6 +208,48 @@ try {
     await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`),
     muted,
   );
+  // A registered implementation should be usable through setup without a
+  // special-case engine branch or a hand-maintained list of UI choices.
+  await evaluate(`(async () => {
+    const {Bot,registerBot} = await import('/src/bots/index.js');
+    window.__customBotCalls=0;
+    class BrowserTestBot extends Bot {
+      decide(context) {
+        if (!context.map.cells.length || !Object.isFrozen(context.self)) throw Error('Incomplete bot context');
+        window.__customBotCalls++;
+        return {throttle:0.5,steer:0.2};
+      }
+    }
+    registerBot('browser-custom',BrowserTestBot,{label:'Custom',tagline:'CUSTOM STRATEGY'});
+  })()`);
+  await click('opponent-minus');
+  assert.equal(await evaluate(`document.querySelectorAll('#difficulty button').length`), 4);
+  assert.equal(
+    await evaluate(
+      `Array.from(document.querySelectorAll('[data-bot]')).every(s=>Array.from(s.options).some(o=>o.value==='browser-custom'))`,
+    ),
+    true,
+  );
+  await evaluate(`document.querySelector('#difficulty [data-value="browser-custom"]').click()`);
+  assert.equal(
+    await evaluate(`document.getElementById('difficulty-status').textContent`),
+    'CUSTOM STRATEGY',
+  );
+  await click('start-button');
+  await delay(2900);
+  assert.ok(await evaluate(`window.__customBotCalls>0`));
+  await screenshot('custom-bot-playing');
+  await click('pause-button');
+  await size(390, 844, true);
+  await delay(100);
+  assert.equal(
+    await evaluate(`document.documentElement.scrollWidth>innerWidth`),
+    false,
+    'custom bot choices overflow mobile layout',
+  );
+  await size(1440, 900, false);
+  await delay(100);
+  await evaluate(`document.querySelector('[data-action="quit"]').click()`);
   // Exercise the actual engine and renderer in the reported wall-edge pose.
   // This fixture exists only in the isolated QA browser, not in the game UI.
   const corner = await evaluate(`(async () => {
@@ -253,6 +295,7 @@ try {
           '390 / 768 / 1100 / 1440 layouts',
           'touch controls',
           'saved preferences',
+          'registered custom bot appears in setup and controls a live opponent',
           'wall-edge firing regression',
           'no runtime errors',
         ],
