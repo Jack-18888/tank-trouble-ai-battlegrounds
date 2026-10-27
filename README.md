@@ -59,7 +59,7 @@ Touchscreens get a direction pad and a fire button when a human is playing. Cont
 - A new connected maze each round, with a visible map seed.
 - First to 3, 5, or 10 round wins, or endless play. A 90-second round limit resolves stalemates as a draw.
 - Optional shield, rapid-fire, and triple-shot pickups.
-- Five active shells per tank; ricochets can hit the tank that fired them.
+- Each tank starts each round with ten bullets, capped at ten in reserve. One bullet refills every 2 seconds, speeding up to every 1.5 seconds at 20 seconds, 1 second at 40 seconds, and 0.5 seconds at 60 seconds. The final 20 seconds (from 70 seconds) grant unlimited ammo. Each shell in a triple-shot volley costs one bullet; shells in flight do not limit firing or refund ammo when they disappear. Ricochets can hit the tank that fired them.
 - Shells travel about 23% faster than the player tank, leaving room to dodge.
 - Tracks, hulls, and barrels use their rendered, rotated shapes for collisions. Shells start beyond the muzzle; a blocked muzzle does not fire a shell back inside the tank.
 - Turning against a wall gently makes room for the tank to pivot. Gaps that cannot fit the tank and contact with other tanks still block movement.

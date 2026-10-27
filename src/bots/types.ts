@@ -34,7 +34,9 @@ export interface BotObservation {
     playerSpeed: number;
     shellSpeed: number;
     shellLifetime: number;
-    maxShells: number;
+    maxAmmo: number;
+    roundDuration: number;
+    infiniteAmmoDuration: number;
   };
 }
 /** Local, frozen strategy view. Query functions exist only in the controller's execution realm. */

@@ -7,6 +7,7 @@ import { Sound } from './audio.ts';
 import { assignController, PlayerRuntime } from './players/index.ts';
 import { browserBotConnection } from './players/browser-connection.ts';
 import { scoreCards } from './scoreboard.ts';
+import { RULES } from './rules.ts';
 
 interface Controls {
   arena: HTMLCanvasElement;
@@ -477,7 +478,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]'))
 
 const notes = [
   'Walls are a suggestion. Bounce your shots around corners to catch a tank off guard.',
-  'Five shells in flight. Make them count — your ammo returns when a shell disappears.',
+  'Ten bullets to start. Ammo refills faster as the round goes on — unlimited in the final 20 seconds.',
   'A shield blocks one hit. The bravest route to a power-up might be the best route.',
   'Hard bots know their angles. Keep moving when you hear a shell hit the wall.',
 ];
@@ -539,7 +540,7 @@ function frame(time: number) {
   renderer.draw(game, time / 1000);
   if (time > toastUntil) $('round-toast').classList.remove('visible');
   if (game.state === 'playing') {
-    const clock = `${game.config.target ? 'FIRST TO ' + game.config.target : 'ENDLESS'} · ${Math.max(0, 90 - Math.floor(game.elapsed))}s`;
+    const clock = `${game.config.target ? 'FIRST TO ' + game.config.target : 'ENDLESS'} · ${Math.max(0, RULES.roundDuration - Math.floor(game.elapsed))}s`;
     if (clock !== lastClock) {
       $('match-clock').textContent = clock;
       lastClock = clock;

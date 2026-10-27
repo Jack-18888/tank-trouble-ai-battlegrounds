@@ -1,4 +1,5 @@
 import { CELL } from './engine.ts';
+import { RULES } from './rules.ts';
 import { TANK_SHAPES, SHELL_RADIUS, WALL_RADIUS } from './geometry.ts';
 import type { Game } from './engine.ts';
 import type { GameMap, Tank, Powerup } from './types.ts';
@@ -272,10 +273,14 @@ export class Renderer {
     ctx.fillStyle = human ? tank.color : '#61734dbb';
     ctx.fillText(human ? 'YOU' : tank.name.toUpperCase(), tank.x, tank.y + 30);
     if (human && game.state === 'playing') {
-      const active = game.bullets.filter((b) => b.owner === tank.id).length;
-      for (let i = 0; i < 5; i++) {
-        ctx.fillStyle = `${tank.color}${i < 5 - active ? '99' : '20'}`;
-        ctx.fillRect(tank.x - 11 + i * 5, tank.y + 35, 3, 2);
+      if (game.infiniteAmmo) {
+        ctx.font = 'bold 14px Consolas, monospace';
+        ctx.fillText('∞', tank.x, tank.y + 43);
+      } else {
+        for (let i = 0; i < RULES.maxAmmo; i++) {
+          ctx.fillStyle = `${tank.color}${i < tank.ammo ? '99' : '20'}`;
+          ctx.fillRect(tank.x - (RULES.maxAmmo * 4 - 2) / 2 + i * 4, tank.y + 35, 2, 2);
+        }
       }
     }
   }

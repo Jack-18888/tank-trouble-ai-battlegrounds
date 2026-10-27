@@ -10,5 +10,12 @@ export const RULES = Object.freeze({
   playerSpeed: PLAYER_SPEED,
   shellSpeed: SHELL_SPEED,
   shellLifetime: SHELL_LIFETIME,
-  maxShells: 5,
+  maxAmmo: 10,
+  roundDuration: 90,
+  infiniteAmmoDuration: 20,
 });
+
+/** One bullet every 2 / 1.5 / 1 / 0.5 seconds as each 20-second round stage begins. */
+export function ammoRefillInterval(elapsed: number): number {
+  return Math.max(0.5, 2 - Math.floor(elapsed / 20) * 0.5);
+}

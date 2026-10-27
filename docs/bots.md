@@ -92,16 +92,16 @@ The last decision remains active until the next call. Every bot receives its own
 
 `BotContext` is defined in `src/bots/types.ts` using deeply read-only versions of the game entities in `src/types.ts`. Observations are detached copies and deeply frozen. The compiler rejects mutation of observation fields as well as incompatible controls; runtime checks also protect JavaScript callers. Strategies can read all of the following without modifying the live simulation:
 
-| Field      | Contents                                                                                                          |
-| ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| `self`     | Own tank: ID, position, angle, velocity, cooldown, shield, power-up timers, and movement-stagnation timer `stuck` |
-| `tanks`    | Every tank, including the player and eliminated tanks                                                             |
-| `enemies`  | Living tanks other than `self`; order is not a targeting priority                                                 |
-| `bullets`  | Shell positions, velocities, owners, remaining lifetime, age, and bounce count                                    |
-| `powerups` | Available pickup types, positions, and lifetimes                                                                  |
-| `map`      | Dimensions, cell coordinates and adjacency walls, collision wall segments, and seed                               |
-| `match`    | State, round number, elapsed round seconds, round-win scores, match-long kill totals, and win target              |
-| `rules`    | `cellSize`, `playerSpeed`, `shellSpeed`, `shellLifetime`, and `maxShells`                                         |
+| Field      | Contents                                                                                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `self`     | Own tank: ID, position, angle, velocity, cooldown, reserve `ammo`, refill `ammoProgress`, shield, power-up timers, and movement-stagnation timer `stuck` |
+| `tanks`    | Every tank, including the player and eliminated tanks                                                                                                    |
+| `enemies`  | Living tanks other than `self`; order is not a targeting priority                                                                                        |
+| `bullets`  | Shell positions, velocities, owners, remaining lifetime, age, and bounce count                                                                           |
+| `powerups` | Available pickup types, positions, and lifetimes                                                                                                         |
+| `map`      | Dimensions, cell coordinates and adjacency walls, collision wall segments, and seed                                                                      |
+| `match`    | State, round number, elapsed round seconds, round-win scores, match-long kill totals, and win target                                                     |
+| `rules`    | `cellSize`, `playerSpeed`, `shellSpeed`, `shellLifetime`, `maxAmmo`, `roundDuration`, and `infiniteAmmoDuration`                                         |
 
 Positions and velocities use world pixels and pixels per second. Angles use radians; zero faces right and positive rotation turns clockwise. Each cell's `walls` array is ordered north, east, south, west; `true` means blocked. `self.stuck` is a short-lived movement sensor, reset periodically after about 1.5 seconds of blockage.
 

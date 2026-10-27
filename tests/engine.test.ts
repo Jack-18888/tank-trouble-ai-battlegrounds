@@ -210,14 +210,15 @@ test('shield absorbs exactly one hit and the next hit eliminates the tank', () =
   assert.equal(tank.alive, false);
   assert.deepEqual(game.kills, [0, 1], 'an actual shell elimination credits its owner');
 });
-test('five-shell limit, power-up expiry, and paused simulation behave correctly', () => {
+test('ten-bullet reserve, power-up expiry, and paused simulation behave correctly', () => {
   const game = emptyArena(),
     tank = game.tanks[0];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 12; i++) {
     tank.cooldown = 0;
     game.fire(tank);
   }
-  assert.equal(game.bullets.length, 5);
+  assert.equal(game.bullets.length, 10);
+  assert.equal(tank.ammo, 0);
   tank.power = 'rapid';
   tank.powerTime = 0.01;
   game.update(0.02);

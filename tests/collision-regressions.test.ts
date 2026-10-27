@@ -58,6 +58,7 @@ test('a genuinely blocked muzzle does not spawn a shell inside its own tank', ()
   assert.equal(game.bullets.length, 0);
   assert.equal(tank.alive, true);
   assert.equal(tank.cooldown, 0, 'blocked firing should not consume a shot');
+  assert.equal(tank.ammo, 10, 'blocked firing should not spend ammunition');
 });
 
 test('a free track drives the tank around a wall endpoint in either direction', () => {

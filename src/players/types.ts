@@ -7,7 +7,7 @@ export interface PlayerDecision {
   steer?: number;
   /** -1 reverses, +1 drives forward. */
   throttle?: number;
-  /** Hold the trigger; the simulation still enforces cooldown and shell limits. */
+  /** Hold the trigger; the simulation still enforces cooldown and ammunition. */
   fire?: boolean;
 }
 

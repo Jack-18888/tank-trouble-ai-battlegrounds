@@ -14,7 +14,7 @@ import { hasBot } from './bots/index.ts';
 import { observeWorld } from './players/observation.ts';
 import { validateProfile } from './players/profile.ts';
 import { randomGenerator } from './random.ts';
-import { CELL, SHELL_SPEED, SHELL_LIFETIME, RULES } from './rules.ts';
+import { CELL, SHELL_SPEED, SHELL_LIFETIME, RULES, ammoRefillInterval } from './rules.ts';
 import { firstWall, lineOfSight, predictShot } from './queries.ts';
 import type {
   ControlStamp,
@@ -255,6 +255,10 @@ export class Game {
     const id = this.config.players.findIndex((slot) => slot.kind === 'human');
     return id === -1 ? null : id;
   }
+  /** The last 20 seconds of each round allow firing without spending reserve ammunition. */
+  get infiniteAmmo(): boolean {
+    return this.elapsed + 1e-9 >= RULES.roundDuration - RULES.infiniteAmmoDuration;
+  }
   emit(event: GameEvent) {
     this.events.push(event);
   }
@@ -320,6 +324,8 @@ export class Game {
         angle: -Math.PI / 2 + this.rng() * Math.PI * 2,
         alive: true,
         cooldown: 0.4,
+        ammo: RULES.maxAmmo,
+        ammoProgress: 0,
         shield: false,
         power: null,
         powerTime: 0,
@@ -418,6 +424,16 @@ export class Game {
     for (const tank of this.tanks) {
       if (!tank.alive) continue;
       tank.cooldown = Math.max(0, tank.cooldown - dt);
+      if (this.infiniteAmmo || tank.ammo >= RULES.maxAmmo) {
+        tank.ammo = RULES.maxAmmo;
+        tank.ammoProgress = 0;
+      } else {
+        tank.ammoProgress += dt / ammoRefillInterval(this.elapsed);
+        const restored = Math.floor(tank.ammoProgress + 1e-9);
+        tank.ammo = Math.min(RULES.maxAmmo, tank.ammo + restored);
+        tank.ammoProgress =
+          tank.ammo === RULES.maxAmmo ? 0 : Math.max(0, tank.ammoProgress - restored);
+      }
       if (tank.powerTime > 0) {
         tank.powerTime -= dt;
         if (tank.powerTime <= 0) tank.power = null;
@@ -461,11 +477,13 @@ export class Game {
     this.updateBullets(dt);
     if (this.config.powerups) this.updatePowerups(dt);
     const alive = this.tanks.filter((t) => t.alive);
-    if (alive.length <= 1 || this.elapsed >= 90) {
+    if (alive.length <= 1 || this.elapsed >= RULES.roundDuration) {
       if (this.settleTimer === null) this.settleTimer = 0.65;
       this.settleTimer -= dt;
       if (this.settleTimer <= 0)
-        this.finishRound(this.elapsed >= 90 && alive.length > 1 ? null : alive[0] || null);
+        this.finishRound(
+          this.elapsed >= RULES.roundDuration && alive.length > 1 ? null : alive[0] || null,
+        );
     }
   }
   /** Test the full visible silhouette against walls and all other living tanks. */
@@ -562,10 +580,9 @@ export class Game {
     tank.angle = pose.angle;
     return true;
   }
-  /** Try one volley, respecting profile availability, muzzle clearance, cooldown, and shell limits. */
+  /** Try one volley, respecting profile availability, muzzle clearance, cooldown, and ammunition. */
   fire(tank: Tank): boolean {
-    const active = this.bullets.filter((b) => b.owner === tank.id).length;
-    if (tank.cooldown > 0 || active >= 5 || !tank.alive) return false;
+    if (tank.cooldown > 0 || (!this.infiniteAmmo && tank.ammo <= 0) || !tank.alive) return false;
     const muzzle = muzzlePosition(tank);
     // Never clamp a shell back into its own hull. A blocked muzzle cannot fire.
     if (firstWall(this.map, tank.x, tank.y, muzzle.x - tank.x, muzzle.y - tank.y)) return false;
@@ -573,7 +590,8 @@ export class Game {
     const profile = this.players.get(tank.id)?.profile;
     if (!profile) return false;
     const error = profile.error ? (this.rng() - 0.5) * 2 * profile.error : 0;
-    for (const offset of spread.slice(0, 5 - active)) {
+    const volley = this.infiniteAmmo ? spread : spread.slice(0, tank.ammo);
+    for (const offset of volley) {
       const angle = tank.angle + offset + error;
       const dx = Math.cos(angle),
         dy = Math.sin(angle);
@@ -589,6 +607,7 @@ export class Game {
         dead: false,
       });
     }
+    if (!this.infiniteAmmo) tank.ammo -= volley.length;
     tank.cooldown = tank.power === 'rapid' ? 0.13 : profile.cooldown;
     this.burst(muzzle.x, muzzle.y, '#f2d980', 4, 35, 0.18);
     this.emit({ type: 'fire', ...{ id: tank.id } });

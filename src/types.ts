@@ -97,6 +97,10 @@ export interface Tank extends TankPose {
   controller: PlayerSlot;
   /** Seconds until another volley is eligible. */
   cooldown: number;
+  /** Unspent bullets, capped at the ammo capacity even during unlimited ammo. */
+  ammo: number;
+  /** Fractional progress toward the next bullet; discarded when the reserve is full. */
+  ammoProgress: number;
   shield: boolean;
   power: OffensivePower | null;
   powerTime: number;
