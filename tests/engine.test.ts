@@ -249,6 +249,47 @@ test('rounds award scores, finish matches, and handle draws', () => {
   assert.equal(draw.state, 'roundOver');
 });
 
+test('a draw awards the unique round-kill leader even after elimination and can finish a match', () => {
+  const game = createTestGame({ target: 3 }, 'kill-tiebreak');
+  game.destroyTank(game.tanks[1], 0);
+  game.destroyTank(game.tanks[2], 0);
+  game.destroyTank(game.tanks[0], 0);
+  game.kills[1] = 10;
+  game.scores[0] = 2;
+  game.scores[1] = 2;
+  game.drainEvents();
+  game.finishRound(null);
+  assert.equal(game.winner, game.tanks[0]);
+  assert.deepEqual(game.scores, [3, 2, 0]);
+  assert.equal(game.state, 'matchOver');
+  assert.ok(
+    game
+      .drainEvents()
+      .some((event) => event.type === 'roundEnd' && event.winner === 0 && event.match),
+  );
+});
+
+test('shared round-kill leads remain a draw regardless of match kills or wins', () => {
+  const game = createTestGame({}, 'shared-kill-lead');
+  game.tanks[0].kills = 1;
+  game.tanks[1].kills = 1;
+  game.kills[0] = 10;
+  game.scores[0] = 2;
+  game.finishRound(null);
+  assert.equal(game.winner, null);
+  assert.deepEqual(game.scores, [2, 0, 0]);
+  assert.equal(game.state, 'roundOver');
+});
+
+test('an outright survival win takes precedence over the round-kill leader', () => {
+  const game = createTestGame({}, 'survival-win');
+  game.destroyTank(game.tanks[1], 0);
+  game.destroyTank(game.tanks[0], 0);
+  game.finishRound(game.tanks[2]);
+  assert.equal(game.winner, game.tanks[2]);
+  assert.deepEqual(game.scores, [0, 0, 1]);
+});
+
 test('match kills persist across rounds, stay separate from wins, and reset for a new match', () => {
   const game = createTestGame({}, 'match-kills');
   game.start();

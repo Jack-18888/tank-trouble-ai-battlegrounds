@@ -464,8 +464,13 @@ try {
       evaluate<string[]>(
         `Array.from(document.querySelectorAll('#kills-qa [data-score="wins"]')).map(node=>node.textContent)`,
       );
+    const readRoundKills = () =>
+      evaluate<string[]>(
+        `Array.from(document.querySelectorAll('#kills-qa [data-score="round-kills"]')).map(node=>node.textContent)`,
+      );
     assert.deepEqual(await readKillTotals(), ['1', '0', '2', '0', '0', '0']);
     assert.deepEqual(await readWinTotals(), ['1', '0', '1', '0', '0', '0']);
+    assert.deepEqual(await readRoundKills(), ['0', '0', '1', '0', '0', '0']);
     await screenshot('kills-desktop');
     await size(390, 844, true);
     await delay(100);
@@ -474,9 +479,11 @@ try {
     await evaluate('window.__scoreQA.nextRound()');
     assert.deepEqual(await readKillTotals(), ['1', '0', '2', '0', '0', '0']);
     assert.deepEqual(await readWinTotals(), ['1', '0', '1', '0', '0', '0']);
+    assert.deepEqual(await readRoundKills(), ['0', '0', '0', '0', '0', '0']);
     await evaluate('window.__scoreQA.restart()');
     assert.deepEqual(await readKillTotals(), ['0', '0', '0', '0', '0', '0']);
     assert.deepEqual(await readWinTotals(), ['0', '0', '0', '0', '0', '0']);
+    assert.deepEqual(await readRoundKills(), ['0', '0', '0', '0', '0', '0']);
     await evaluate('window.__scoreQA.dispose()');
     await size(1440, 1100);
     await evaluate(

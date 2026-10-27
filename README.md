@@ -57,7 +57,7 @@ Touchscreens get a direction pad and a fire button when a human is playing. Cont
 - Hard: faster reactions, predictive aim, incoming shell avoidance, and single-bounce bank shots. Bots use the same movement and shell physics as the player.
 - Compact, classic, and expansive maps; open, balanced, and labyrinth layouts.
 - A new connected maze each round, with a visible map seed.
-- First to 3, 5, or 10 round wins, or endless play. A 90-second round limit resolves stalemates as a draw.
+- First to 3, 5, or 10 round wins, or endless play. Rounds end after 90 seconds. Ties go to the tank with the most kills that round; shared kill leads remain a draw.
 - Optional shield, rapid-fire, and triple-shot pickups.
 - Each tank starts each round with ten bullets, capped at ten in reserve. One bullet refills every 2 seconds, speeding up to every 1.5 seconds at 20 seconds, 1 second at 40 seconds, and 0.5 seconds at 60 seconds. The final 20 seconds (from 70 seconds) grant unlimited ammo. Each shell in a triple-shot volley costs one bullet; shells in flight do not limit firing or refund ammo when they disappear. Ricochets can hit the tank that fired them.
 - Shells travel about 23% faster than the player tank, leaving room to dodge.
@@ -74,7 +74,7 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, queued player command application, swept projectile collisions, power-ups, and match state.
 - `src/players/`: shared abstract player contract, runtime, human/worker connections, bounded messaging, per-bot scheduling, profiles, and roster controller swaps.
 - `src/bots/`: Easy/Medium/Hard subclasses, shared combat strategy, and the registry used by the game and setup UI.
-- `src/scoreboard.ts`: live round-win and cumulative kill displays for every tank.
+- `src/scoreboard.ts`: live round-win, total kill, and current-round kill displays for every tank.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
 - `src/queries.ts`, `src/rules.ts`, `src/random.ts`: DOM-free pathfinding, visibility, shot prediction, rules, and seeded randomness shared with workers.
 - `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.

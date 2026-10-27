@@ -690,8 +690,13 @@ export class Game {
     this.emit({ type: 'destroy', ...{ id: tank.id, owner } });
     this.emit({ type: 'score' });
   }
-  /** Award one survival win, or a draw for null, and choose round-over versus match-over state. */
+  /** Award a survival win, breaking draws with a unique round-kill leader. */
   finishRound(winner: Tank | null) {
+    if (!winner) {
+      const mostKills = Math.max(...this.tanks.map((tank) => tank.kills));
+      const leaders = this.tanks.filter((tank) => tank.kills === mostKills);
+      if (leaders.length === 1) winner = leaders[0];
+    }
     this.invalidateControls();
     if (winner) this.scores[winner.id]++;
     this.winner = winner;
