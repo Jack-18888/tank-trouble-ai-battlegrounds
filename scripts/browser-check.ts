@@ -5,6 +5,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { recordedRound } from '../tests/helpers/replay.ts';
+import { serializeReplay } from '../src/replay.ts';
 interface BrowserTarget {
   type: string;
   webSocketDebuggerUrl: string;
@@ -67,7 +69,7 @@ const browser = spawn(
     '--disable-gpu',
     '--no-first-run',
     '--no-default-browser-check',
-    '--remote-debugging-port=9333',
+    '--remote-debugging-port=0',
     `--user-data-dir=${path.resolve('.qa/chrome')}`,
     'about:blank',
   ],
@@ -87,7 +89,9 @@ try {
   let targets: BrowserTarget[] | undefined;
   for (let i = 0; i < 50; i++) {
     try {
-      const data: unknown = await (await fetch('http://127.0.0.1:9333/json')).json();
+      const port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//.exec(browserLog)?.[1];
+      if (!port) throw new Error('Waiting for the Chromium debugging port');
+      const data: unknown = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
       if (!Array.isArray(data)) throw new Error('Invalid Chromium target list');
       targets = data.filter(
         (target: unknown): target is BrowserTarget =>
@@ -452,6 +456,102 @@ try {
   );
   await selectController(1, 'human');
   await evaluate(`document.querySelector('#difficulty [data-value="medium"]').click()`);
+  // Replay files use the real recorder and pass through the same file input as user uploads.
+  const replaySource = serializeReplay(recordedRound());
+  const uploadReplay = (source: string) =>
+    evaluate(`(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([${JSON.stringify(source)}], 'round.ttr.json', {type:'application/json'}));
+    const input = document.getElementById('replay-file');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+  })()`);
+  assert.equal(await evaluate(`document.getElementById('record-replays').checked`), false);
+  assert.equal(await evaluate(`document.getElementById('save-replay').disabled`), true);
+  await uploadReplay('{invalid');
+  await delay(100);
+  assert.ok(
+    await evaluate(`document.getElementById('replay-message').textContent.includes('JSON')`),
+  );
+  assert.equal(await evaluate(`document.getElementById('replay-controls').hidden`), true);
+  await uploadReplay(replaySource);
+  await delay(150);
+  assert.equal(await evaluate(`document.getElementById('replay-controls').hidden`), false);
+  await click('replay-toggle');
+  const pausedPosition = await evaluate(`document.getElementById('replay-seek').value`);
+  await delay(100);
+  assert.equal(await evaluate(`document.getElementById('replay-seek').value`), pausedPosition);
+  assert.equal(
+    await evaluate(`document.getElementById('arena-state').textContent`),
+    'REPLAY PAUSED',
+  );
+  await evaluate(`(() => {
+    const speed=document.getElementById('replay-speed'); speed.value='4'; speed.dispatchEvent(new Event('change'));
+    const seek=document.getElementById('replay-seek'); seek.value=seek.max; seek.dispatchEvent(new Event('input'));
+  })()`);
+  assert.equal(
+    await evaluate(`document.getElementById('arena-state').textContent`),
+    'REPLAY COMPLETE',
+  );
+  assert.equal(
+    await evaluate(`document.querySelector('[data-tank="0"] [data-score="wins"]').textContent`),
+    '1',
+  );
+  await screenshot('replay-complete');
+  await evaluate(
+    `(() => { const seek=document.getElementById('replay-seek'); seek.value='2.8'; seek.dispatchEvent(new Event('input')); })()`,
+  );
+  assert.equal(
+    await evaluate(`document.querySelector('[data-tank="0"] [data-score="wins"]').textContent`),
+    '0',
+  );
+  await size(390, 844, true);
+  assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false);
+  await delay(250);
+  await screenshot('replay-mobile');
+  await size(1440, 1100);
+  await click('replay-toggle');
+  await delay(500);
+  assert.equal(
+    await evaluate(`document.getElementById('arena-state').textContent`),
+    'REPLAY COMPLETE',
+  );
+  await click('replay-toggle');
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'REPLAY');
+  await click('replay-exit');
+  assert.equal(await evaluate(`document.getElementById('replay-controls').hidden`), true);
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'STANDING BY');
+  await click('record-replays');
+  await cdp('Page.reload');
+  await delay(500);
+  assert.equal(await evaluate(`document.getElementById('record-replays').checked`), true);
+  if (!preview) {
+    // Finish a short real UI round; the recorder still observes actual runtime steps and events.
+    await evaluate(`(async () => {
+      const {Game}=await import('/src/engine.ts');
+      const update=Game.prototype.update;
+      Game.prototype.update=function(dt) { update.call(this,dt); if(this.state==='playing' && this.elapsed>0.2) this.finishRound(this.tanks[0]); };
+      window.__restoreReplayQA=()=>{Game.prototype.update=update;};
+      window.__replayBlobs=[];
+      const create=URL.createObjectURL;
+      URL.createObjectURL=function(blob) { window.__replayBlobs.push(blob); return create.call(this,blob); };
+      const click=HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click=function() { if(!this.download.endsWith('.ttr.json')) click.call(this); };
+      window.__restoreDownloadQA=()=>{URL.createObjectURL=create;HTMLAnchorElement.prototype.click=click;};
+    })()`);
+    await click('shuffle-button');
+    await click('start-button');
+    await delay(2900);
+    assert.equal(await evaluate(`document.getElementById('save-replay').disabled`), false);
+    await click('save-replay');
+    const savedReplay = await evaluate<string>('window.__replayBlobs[0].text()');
+    await evaluate('window.__restoreReplayQA(); window.__restoreDownloadQA()');
+    await uploadReplay(savedReplay);
+    await delay(150);
+    assert.equal(await evaluate(`document.getElementById('replay-controls').hidden`), false);
+    await click('replay-exit');
+  }
+  await click('record-replays');
   if (!preview) {
     await evaluate(
       `(async()=>{const module=await import('/tests/fixtures/browser.ts'); window.__scoreQA=module.startScoreboardFixture();})()`,
@@ -663,11 +763,14 @@ try {
           '390 / 768 / 1100 / 1440 layouts',
           'touch controls',
           'saved preferences',
+          'replay upload validation, pause, seeking, speed, result, and return to setup',
+          'recording preference persistence and responsive replay controls',
           ...(!preview
             ? [
                 'one-second bot computation does not block physics, drawing, human input, or another bot',
                 'importable asynchronous custom bot executes inside a worker',
                 'failed worker is marked offline while the match continues',
+                'opt-in round recording, download, and re-upload through the game UI',
                 'wall-edge firing regression',
                 'right steering at wall contact with no silhouette overlap',
                 'free track drives and pivots around a wall endpoint',

@@ -1807,6 +1807,146 @@ dialog::backdrop {
   }
 }
 
+.replay-panel {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+  min-width: 0;
+}
+
+.replay-panel h3 {
+  margin: 0;
+  font: 700 23px var(--display);
+}
+
+.replay-panel .toggle-row > span:first-child {
+  padding-left: 0;
+}
+
+.replay-indicator {
+  font: 10px var(--mono);
+  color: var(--muted);
+}
+
+.replay-indicator.active {
+  color: #a94f32;
+}
+
+.replay-indicator.active::before {
+  content: '● ';
+}
+
+.replay-note,
+.replay-message,
+.replay-select-label {
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.replay-note {
+  color: #737d69;
+  margin: 12px 0;
+}
+
+.replay-message:empty {
+  display: none;
+}
+
+.replay-message {
+  color: var(--green-dark);
+  overflow-wrap: anywhere;
+  margin-bottom: 0;
+}
+
+.replay-select-label {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.replay-panel select {
+  width: 100%;
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid #c7ceba;
+  border-radius: 4px;
+  padding: 9px;
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.replay-actions,
+.replay-transport {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.replay-actions {
+  margin-top: 10px;
+}
+
+.replay-actions button,
+.replay-transport button {
+  flex: 1;
+  padding: 10px 8px;
+  border: 1px solid #b9c3ac;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--green-dark);
+  font-size: 11px;
+}
+
+.replay-actions button:hover:enabled,
+.replay-transport button:hover:enabled {
+  background: #dce3c9;
+}
+
+.replay-controls {
+  padding: 16px;
+  margin-top: 12px;
+  border: 1px solid #b9c3ac;
+  border-left: 4px solid var(--green);
+  border-radius: 4px;
+  background: #e9ecde;
+}
+
+.replay-controls[hidden] {
+  display: none;
+}
+
+.replay-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font: 10px var(--mono);
+}
+
+#replay-seek {
+  width: 100%;
+  margin: 14px 0;
+  accent-color: var(--green);
+}
+
+.replay-transport label {
+  font-size: 11px;
+}
+
+.replay-transport select {
+  border: 1px solid #b9c3ac;
+  border-radius: 4px;
+  background: var(--paper);
+  padding: 6px;
+  color: var(--ink);
+}
+
+#replay-summary {
+  margin: 12px 0 0;
+  font: 10px/1.6 var(--mono);
+  color: #68775c;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,

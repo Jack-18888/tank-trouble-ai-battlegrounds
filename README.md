@@ -68,6 +68,16 @@ Touchscreens get a direction pad and a fire button when a human is playing. Cont
 
 Match play runs locally, and preferences use browser local storage. There are no accounts, servers, telemetry, or multiplayer connections in the game itself. Google Fonts is optional; local fallback fonts keep the game playable offline.
 
+## Round recording and replay
+
+Turn on **Record my rounds** in the **Round replays** panel before starting a round. The preference is saved locally and defaults to off. Changes take effect at the next round boundary; turning recording off during a round still lets that recording finish. Paused time is excluded. Both human and bot-only matches can be recorded.
+
+Completed rounds appear in the panel. Select a round and click **Save replay** to download a `.ttr.json` file. The latest three completed recordings stay in memory across matches until the page closes or reloads. Unfinished rounds are discarded when you start another match or load a replay. Recording does not automatically download files.
+
+Click **Upload replay** and choose a supported file to watch it in the arena. Use play/pause (or Escape/P), the timeline, and 0.5×/1×/2×/4× speed. Playback stops on the recorded result. **Back to setup** returns to the game. Uploading pauses an active match; cancelling the picker or choosing an invalid file leaves that match available to resume. Files are read locally, with a 32 MB limit and validation before playback.
+
+The observability layer records completed gameplay snapshots at 30 Hz, plus timestamped simulation events from every 120 Hz physics tick. Playback applies the recorded state without starting workers, recalculating decisions, or advancing physics, so asynchronous bot timing is preserved. Cosmetic particles, screen shake, track marks, and audio are omitted. See [the replay format](docs/replays.md) for the versioned JSON contract.
+
 ## Source layout
 
 - `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
@@ -80,12 +90,14 @@ Match play runs locally, and preferences use browser local storage. There are no
 - `src/geometry.ts`: shared tank silhouettes and exact rounded-wall collision geometry.
 - `src/main.ts`: settings, keyboard and touch input, fixed 120 Hz simulation loop, and interface state.
 - `src/audio.ts`: synthesized Web Audio effects.
+- `src/replay.ts`: optional round recorder, versioned file validation, and snapshot playback.
 - `src/style.css`: responsive arcade interface and reduced-motion support.
 - `tests/engine.test.ts`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
 - `tests/collision-regressions.test.ts`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
 - `tests/bots.test.ts`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
 - `tests/connections.test.ts`: readiness, command ordering, backpressure, stale replies, pause/resume, lifecycle cleanup, worker failures/timeouts, and independent randomness.
 - `tests/players.test.ts`: human input in any slot, controller swapping, roster validation, preference migration, reaction timing, and bot-only round progression.
+- `tests/replay.test.ts`: recording boundaries, JSON round trips, immutable capture, playback controls, and malformed file rejection.
 
 To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each bot runs in its own dedicated Web Worker, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 

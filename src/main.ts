@@ -8,6 +8,15 @@ import { assignController, PlayerRuntime } from './players/index.ts';
 import { browserBotConnection } from './players/browser-connection.ts';
 import { scoreCards } from './scoreboard.ts';
 import { RULES } from './rules.ts';
+import {
+  MAX_REPLAY_BYTES,
+  parseReplay,
+  ReplayPlayer,
+  ReplayRecorder,
+  serializeReplay,
+} from './replay.ts';
+import type { RoundReplay } from './replay.ts';
+import type { GameEvent } from './types.ts';
 
 interface Controls {
   arena: HTMLCanvasElement;
@@ -19,6 +28,12 @@ interface Controls {
   'tank-minus': HTMLButtonElement;
   'tank-plus': HTMLButtonElement;
   'help-dialog': HTMLDialogElement;
+  'record-replays': HTMLInputElement;
+  'saved-replays': HTMLSelectElement;
+  'save-replay': HTMLButtonElement;
+  'replay-file': HTMLInputElement;
+  'replay-seek': HTMLInputElement;
+  'replay-speed': HTMLSelectElement;
 }
 function $<K extends keyof Controls>(id: K): Controls[K];
 function $(id: string): HTMLElement;
@@ -36,13 +51,14 @@ const entities: Record<string, string> = {
 };
 const escapeHTML = (value: string) => value.replace(/[&<>"']/g, (char) => entities[char]);
 const storageKey = 'tank-trouble.preferences.v1';
-let saved = { config: DEFAULT_CONFIG, sound: true };
+let saved = { config: DEFAULT_CONFIG, sound: true, recordReplays: false };
 try {
   const raw: unknown = JSON.parse(localStorage.getItem(storageKey) || '{}');
   if (raw && typeof raw === 'object') {
     saved = {
       config: validateGameConfig('config' in raw ? raw.config : undefined),
       sound: !('sound' in raw && raw.sound === false),
+      recordReplays: 'recordReplays' in raw && raw.recordReplays === true,
     };
   }
 } catch {
@@ -51,6 +67,12 @@ try {
 const config = new Game({ ...DEFAULT_CONFIG, ...saved.config }).config;
 let game = new Game(config);
 let runtime = new PlayerRuntime(game, browserBotConnection);
+const recorder = new ReplayRecorder();
+recorder.enabled = saved.recordReplays;
+const recordedRounds: RoundReplay[] = [];
+let playback: ReplayPlayer | null = null;
+let replayUIKey = '';
+let uploadVersion = 0;
 const renderer = new Renderer($('arena'));
 const sound = new Sound(saved.sound !== false);
 const keys = new Set<string>();
@@ -73,6 +95,11 @@ $('fullscreen-button').innerHTML = icons.fullscreen;
 
 /** Close the old match's transports before creating controllers for the replacement. */
 function replaceGame() {
+  uploadVersion++;
+  playback = null;
+  recorder.discard();
+  accumulator = 0;
+  $('replay-controls').hidden = true;
   runtime.dispose();
   game = new Game(config);
   runtime = new PlayerRuntime(game, browserBotConnection);
@@ -96,7 +123,10 @@ function clearInput() {
 window.addEventListener('pagehide', () => runtime.dispose());
 function persist() {
   try {
-    localStorage.setItem(storageKey, JSON.stringify({ config, sound: sound.enabled }));
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({ config, sound: sound.enabled, recordReplays: recorder.enabled }),
+    );
   } catch {
     /* Preferences are a convenience. */
   }
@@ -126,6 +156,7 @@ function settingsUI() {
   $('maze-density').value = config.density;
   $('win-target').value = String(config.target);
   $('powerups').checked = config.powerups;
+  $('record-replays').checked = recorder.enabled;
   const botIds = config.players.flatMap((slot) => (slot.kind === 'bot' ? [slot.botId] : []));
   const mixed = new Set(botIds).size > 1;
   if (!mixed && botIds.length) defaultDifficulty = botIds[0];
@@ -160,7 +191,7 @@ function settingsUI() {
 /** Edit the next-match configuration; active matches keep their own validated config copy. */
 function setupChanged() {
   settingsUI();
-  if (game.state === 'ready' || game.state === 'matchOver') {
+  if (!playback && (game.state === 'ready' || game.state === 'matchOver')) {
     replaceGame();
     scoreboard();
     stateUI();
@@ -186,7 +217,7 @@ function showOverlay(html: string, countdown = false) {
 }
 function stateUI() {
   const state = game.state;
-  const spectating = game.humanId === null;
+  const spectating = playback !== null || game.humanId === null;
   $('arena-shell').classList.toggle('spectating', spectating);
   $('below-arena').classList.toggle('spectating', spectating);
   $('help-dialog').classList.toggle('spectating', spectating);
@@ -200,6 +231,20 @@ function stateUI() {
       ? 'Tank arena. Watching a bot-only match. Escape to pause.'
       : 'Tank arena. Use arrow keys or W A S D to move and turn. Space to fire. Escape to pause.',
   );
+  if (playback) {
+    $('help-intro').textContent =
+      'Watch a saved round. Use the timeline to jump to any moment, change playback speed, or press Escape to pause. Back to setup returns to the game.';
+    $('arena').setAttribute(
+      'aria-label',
+      'Recorded round replay. Escape to pause or resume playback.',
+    );
+    $('spectator-note').hidden = true;
+    $('start-label').textContent = 'Start new match';
+    $('start-caption').textContent = 'REPLAY MODE. START A MATCH TO PLAY.';
+    replayUIKey = '';
+    replayUI();
+    return;
+  }
   const live = ['playing', 'countdown', 'roundOver', 'paused'].includes(state);
   $('pause-button').disabled = !live;
   $('pause-button').innerHTML = icons[state === 'paused' ? 'play' : 'pause'];
@@ -266,12 +311,14 @@ function stateUI() {
   }
 }
 function start() {
+  uploadVersion++;
   sound.unlock();
   clearInput();
   controllerNoticeUntil = 0;
-  if (game.state !== 'ready') replaceGame();
+  if (playback || game.state !== 'ready') replaceGame();
   game.start();
   runtime.sync();
+  recorder.observe(game, 0, []);
   scoreboard();
   mapUI();
   stateUI();
@@ -291,6 +338,12 @@ function quit() {
   settingsUI();
 }
 function pause() {
+  if (playback) {
+    if (playback.time === playback.replay.duration) playback.seek(0);
+    playback.paused = !playback.paused;
+    replayUI();
+    return;
+  }
   clearInput();
   game.pause();
   runtime.sync();
@@ -376,6 +429,10 @@ for (const [id, field] of [
   });
 }
 $('shuffle-button').addEventListener('click', () => {
+  if (playback) {
+    toast('Return to setup to shuffle the maze.');
+    return;
+  }
   if (game.state === 'ready' || game.state === 'matchOver') {
     replaceGame();
     mapUI();
@@ -389,7 +446,9 @@ $('shuffle-button').addEventListener('click', () => {
 
 function openHelp() {
   // Closing help resumes only a match that opening help paused, preserving an earlier manual pause.
-  helpPaused = ['playing', 'countdown', 'roundOver'].includes(game.state);
+  helpPaused = playback
+    ? !playback.paused
+    : ['playing', 'countdown', 'roundOver'].includes(game.state);
   if (helpPaused) pause();
   $('help-dialog').showModal();
 }
@@ -405,7 +464,7 @@ $('help-dialog').addEventListener('click', (e) => {
   }
 });
 $('help-dialog').addEventListener('close', () => {
-  if (helpPaused && game.state === 'paused') pause();
+  if (helpPaused && (playback ? playback.paused : game.state === 'paused')) pause();
   helpPaused = false;
 });
 
@@ -432,6 +491,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (
+    !playback &&
     game.humanId !== null &&
     gameKeys.has(e.code) &&
     ['playing', 'countdown'].includes(game.state)
@@ -446,19 +506,21 @@ window.addEventListener('keyup', (e) => {
 });
 window.addEventListener('blur', () => {
   clearInput();
-  if (['playing', 'countdown', 'roundOver'].includes(game.state)) pause();
+  if (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
+    pause();
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     clearInput();
-    if (['playing', 'countdown', 'roundOver'].includes(game.state)) pause();
+    if (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
+      pause();
   }
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]')) {
   const key = button.dataset.key;
   if (!key) continue;
   button.addEventListener('pointerdown', (e) => {
-    if (game.humanId === null || !['playing', 'countdown'].includes(game.state)) return;
+    if (playback || game.humanId === null || !['playing', 'countdown'].includes(game.state)) return;
     e.preventDefault();
     sound.unlock();
     button.setPointerCapture(e.pointerId);
@@ -476,14 +538,162 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]'))
   button.addEventListener('lostpointercapture', release);
 }
 
+function formatReplayTime(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+
+function recordingUI() {
+  const active = recorder.active && !playback;
+  const indicator = active ? 'REC' : recorder.enabled ? 'ARMED' : 'OFF';
+  if ($('recording-indicator').textContent !== indicator) {
+    $('recording-indicator').textContent = indicator;
+    $('recording-indicator').classList.toggle('active', active);
+  }
+  const status = active
+    ? `Recording round ${game.round}. Save it here when the round ends.`
+    : recorder.enabled
+      ? 'Ready to record from the start of the next round.'
+      : 'Recording is off.';
+  if ($('recording-status').textContent !== status) $('recording-status').textContent = status;
+}
+
+function rememberReplay(replay: RoundReplay) {
+  recordedRounds.unshift(replay);
+  recordedRounds.splice(3);
+  $('saved-replays').replaceChildren(
+    ...recordedRounds.map((round, i) => {
+      const option = document.createElement('option');
+      option.value = String(i);
+      option.textContent = `Round ${round.round} · ${round.map.seed} · ${formatReplayTime(round.duration)}`;
+      return option;
+    }),
+  );
+  $('saved-replays').disabled = false;
+  $('save-replay').disabled = false;
+  $('replay-message').textContent = `Round ${replay.round} recorded. Save the replay to keep it.`;
+}
+
+function replayUI() {
+  if (!playback) return;
+  const { replay, time, paused, frameIndex } = playback;
+  const ended = time === replay.duration;
+  $('replay-controls').hidden = false;
+  $('replay-time').textContent = `${formatReplayTime(time)} / ${formatReplayTime(replay.duration)}`;
+  $('replay-seek').max = String(replay.duration);
+  $('replay-seek').value = String(time);
+  $('replay-toggle').textContent = ended ? 'Play again' : paused ? 'Play replay' : 'Pause replay';
+  $('replay-toggle').setAttribute('aria-pressed', String(!paused));
+  $('pause-button').disabled = false;
+  $('pause-button').innerHTML = icons[paused ? 'play' : 'pause'];
+  $('pause-button').setAttribute('aria-label', paused ? 'Play replay' : 'Pause replay');
+  $('arena-state').textContent = ended ? 'REPLAY COMPLETE' : paused ? 'REPLAY PAUSED' : 'REPLAY';
+  $('arena-state').classList.toggle('playing', !paused);
+  $('round-label').textContent = `ROUND ${String(replay.round).padStart(2, '0')} · REPLAY`;
+  $('match-clock').textContent =
+    `${Math.max(0, RULES.roundDuration - Math.floor(game.elapsed))}s · RECORDED`;
+  const uiKey = `${frameIndex}:${paused}`;
+  if (uiKey === replayUIKey) return;
+  replayUIKey = uiKey;
+  scoreboard();
+  if (ended) {
+    showOverlay(
+      '<h2>Round replay complete.</h2><p id="replay-result"></p><button class="start-button" data-action="resume">Watch again <span>↻</span></button>',
+    );
+    $('replay-result').textContent = game.winner
+      ? `${game.winner.name} won this round.`
+      : 'The round ended in a draw.';
+  } else if (game.state === 'countdown') {
+    showOverlay(
+      `<span class="countdown-number">${Math.max(1, Math.ceil(game.timer / 0.8))}</span><p>RECORDED ROUND ${replay.round}</p>`,
+      true,
+    );
+  } else {
+    $('overlay').classList.add('hidden');
+  }
+}
+
+$('record-replays').addEventListener('change', () => {
+  recorder.enabled = $('record-replays').checked;
+  persist();
+  recordingUI();
+});
+$('save-replay').addEventListener('click', () => {
+  const replay = recordedRounds[Number($('saved-replays').value)];
+  if (!replay) return;
+  try {
+    const source = serializeReplay(replay);
+    const url = URL.createObjectURL(new Blob([source], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tank-trouble-${replay.recordedAt.replace(/[:.]/g, '-')}-round-${replay.round}.ttr.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $('replay-message').textContent = `Round ${replay.round} replay download started.`;
+  } catch (error) {
+    $('replay-message').textContent =
+      error instanceof Error ? error.message : 'Unable to save this replay.';
+  }
+});
+$('load-replay').addEventListener('click', () => {
+  if (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
+    pause();
+  $('replay-file').click();
+});
+$('replay-file').addEventListener('change', async () => {
+  const file = $('replay-file').files?.[0];
+  $('replay-file').value = '';
+  if (!file) return;
+  const version = ++uploadVersion;
+  try {
+    if (file.size > MAX_REPLAY_BYTES) throw new Error('Replay files must be 32 MB or smaller.');
+    const replay = parseReplay(await file.text());
+    if (version !== uploadVersion) return;
+    const player = new ReplayPlayer(replay);
+    clearInput();
+    runtime.dispose();
+    recorder.discard();
+    playback = player;
+    game = player.game;
+    accumulator = 0;
+    helpPaused = false;
+    toastUntil = 0;
+    $('round-toast').classList.remove('visible');
+    $('replay-speed').value = '1';
+    const volleys = replay.events.filter(({ event }) => event.type === 'fire').length;
+    const eliminations = replay.events.filter(({ event }) => event.type === 'destroy').length;
+    $('replay-summary').textContent =
+      `${replay.frames.length} snapshots · ${volleys} volleys · ${eliminations} eliminations · ${replay.events.length} events`;
+    $('replay-message').textContent = `Loaded round ${replay.round} replay.`;
+    mapUI();
+    stateUI();
+    recordingUI();
+  } catch (error) {
+    if (version === uploadVersion)
+      $('replay-message').textContent =
+        error instanceof Error ? error.message : 'Unable to open this replay.';
+  }
+});
+$('replay-toggle').addEventListener('click', pause);
+$('replay-exit').addEventListener('click', quit);
+$('replay-seek').addEventListener('input', () => {
+  if (!playback) return;
+  playback.seek(Number($('replay-seek').value));
+  replayUI();
+});
+$('replay-speed').addEventListener('change', () => {
+  if (playback) playback.speed = Number($('replay-speed').value);
+});
+
 const notes = [
   'Walls are a suggestion. Bounce your shots around corners to catch a tank off guard.',
   'Ten bullets to start. Ammo refills faster as the round goes on — unlimited in the final 20 seconds.',
   'A shield blocks one hit. The bravest route to a power-up might be the best route.',
   'Hard bots know their angles. Keep moving when you hear a shell hit the wall.',
 ];
-function handleEvents() {
-  for (const event of game.drainEvents()) {
+function handleEvents(events: readonly GameEvent[]) {
+  for (const event of events) {
     sound.play(event, game.humanId);
     if (event.type === 'state') stateUI();
     if (event.type === 'score') scoreboard();
@@ -531,12 +741,24 @@ function frame(time: number) {
   // independently of rendering; PlayerRuntime publishes observations on its own 30 Hz cadence.
   const elapsed = Math.min((time - (previousTime || time)) / 1000, 0.1);
   previousTime = time;
+  if (playback) {
+    playback.advance(elapsed);
+    replayUI();
+    renderer.draw(game, playback.time);
+    if (time > toastUntil) $('round-toast').classList.remove('visible');
+    requestAnimationFrame(frame);
+    return;
+  }
   accumulator += elapsed;
   while (accumulator >= 1 / 120) {
     runtime.step(1 / 120);
+    const events = game.drainEvents();
+    const completed = recorder.observe(game, 1 / 120, events);
+    if (completed) rememberReplay(completed);
+    handleEvents(events);
     accumulator -= 1 / 120;
   }
-  handleEvents();
+  recordingUI();
   renderer.draw(game, time / 1000);
   if (time > toastUntil) $('round-toast').classList.remove('visible');
   if (game.state === 'playing') {
