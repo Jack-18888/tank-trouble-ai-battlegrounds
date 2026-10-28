@@ -39,10 +39,17 @@ export interface SimulationReport {
   version: 1;
   execution: 'in-process' | 'browser-workers';
   environment: string;
+  /** Requested wall-time multiplier for browser runs; absent in older reports means 1x. */
+  browserSpeed?: number;
   sourceHash: string;
   plan: SimulationPlan;
   results: SimulationResult[];
   elapsedMs: number;
+}
+
+export function validateBrowserSpeed(speed: number): void {
+  if (!Number.isFinite(speed) || speed < 1 || speed > 64)
+    throw new Error('Browser speed must be a finite number between 1 and 64.');
 }
 
 export function validateSimulationPlan(plan: SimulationPlan): void {

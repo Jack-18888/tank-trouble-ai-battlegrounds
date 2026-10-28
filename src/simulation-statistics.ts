@@ -1,4 +1,5 @@
 import type { Outcome, SimulationReport, SimulationResult } from './simulation.ts';
+import { validateBrowserSpeed } from './simulation.ts';
 
 export interface Rate {
   count: number;
@@ -42,14 +43,24 @@ export function summarizeResults(results: SimulationResult[]) {
  * 95% simultaneous coverage; small or identical samples must still carry uncertainty.
  */
 export function compareReports(
-  headless: SimulationReport,
+  candidate: SimulationReport,
   browser: SimulationReport,
   tolerance = 0.05,
 ) {
   if (!(tolerance > 0 && tolerance < 1)) throw new Error('Tolerance must be between 0 and 1.');
-  if (headless.execution !== 'in-process' || browser.execution !== 'browser-workers')
-    throw new Error('Compare an in-process report against a browser-workers report.');
-  if (headless.sourceHash !== browser.sourceHash)
+  if (
+    !['in-process', 'browser-workers'].includes(candidate.execution) ||
+    browser.execution !== 'browser-workers'
+  )
+    throw new Error('Compare a simulation report against a browser-workers reference.');
+  const referenceSpeed = browser.browserSpeed ?? 1;
+  validateBrowserSpeed(referenceSpeed);
+  if (referenceSpeed !== 1)
+    throw new Error(
+      'Use a 1x browser reference. Accelerated reports cannot represent normal browser play.',
+    );
+  if (candidate.execution === 'browser-workers') validateBrowserSpeed(candidate.browserSpeed ?? 1);
+  if (candidate.sourceHash !== browser.sourceHash)
     throw new Error('Comparison reports must come from the same source revision.');
   const fields = [
     'bots',
@@ -64,15 +75,15 @@ export function compareReports(
   ] as const;
   if (
     fields.some(
-      (field) => JSON.stringify(headless.plan[field]) !== JSON.stringify(browser.plan[field]),
+      (field) => JSON.stringify(candidate.plan[field]) !== JSON.stringify(browser.plan[field]),
     )
   )
     throw new Error('Comparison reports must use the same bots, seeds, sides, and settings.');
-  const count = headless.plan.count;
-  if (headless.results.length !== count || browser.results.length !== count)
+  const count = candidate.plan.count;
+  if (candidate.results.length !== count || browser.results.length !== count)
     throw new Error('Comparison reports must contain every planned sample.');
   for (let i = 0; i < count; i++) {
-    const a = headless.results[i];
+    const a = candidate.results[i];
     const b = browser.results[i];
     if (a.index !== i || b.index !== i || a.seed !== b.seed || a.swapped !== b.swapped)
       throw new Error('Comparison samples must be paired in seed and slot order.');
@@ -82,7 +93,7 @@ export function compareReports(
       );
   }
   if (
-    headless.results.some((row) => !OUTCOMES.includes(row.outcome as Outcome)) ||
+    candidate.results.some((row) => !OUTCOMES.includes(row.outcome as Outcome)) ||
     browser.results.some((row) => !OUTCOMES.includes(row.outcome as Outcome))
   )
     throw new Error('Comparison samples must have a valid win, tie, or loss outcome.');
@@ -90,7 +101,7 @@ export function compareReports(
     let positive = 0;
     let negative = 0;
     for (let i = 0; i < count; i++) {
-      const a = headless.results[i].outcome === outcome;
+      const a = candidate.results[i].outcome === outcome;
       const b = browser.results[i].outcome === outcome;
       if (a && !b) positive++;
       if (!a && b) negative++;
@@ -107,6 +118,12 @@ export function compareReports(
     return { outcome, difference: (positive - negative) / count, interval, status };
   });
   return {
+    candidate: {
+      execution: candidate.execution,
+      browserSpeed:
+        candidate.execution === 'browser-workers' ? (candidate.browserSpeed ?? 1) : null,
+    },
+    reference: { execution: browser.execution, browserSpeed: referenceSpeed },
     tolerance,
     samples: count,
     status: outcomes.some((outcome) => outcome.status === 'different')

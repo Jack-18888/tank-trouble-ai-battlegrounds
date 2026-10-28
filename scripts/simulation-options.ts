@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import path from 'node:path';
 import type { SimulationPlan } from '../src/simulation.ts';
-import { validateSimulationPlan } from '../src/simulation.ts';
+import { validateBrowserSpeed, validateSimulationPlan } from '../src/simulation.ts';
 
 export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [options]
 
@@ -16,15 +16,16 @@ export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [options]
   --fixed-sides       Disable alternating starting slots
   --replays DIR       Save each completed round as an existing .ttr.json replay
   --out FILE          Save results, settings, source fingerprint, and statistics as JSON
-  --browser           Collect a real-time browser-worker reference instead (requires Vite/Chrome)
+  --browser           Run browser workers instead (requires Vite/Chrome; default: real time)
+  --browser-speed N   Requested browser speed, 1 to 64 (default: 1; requires --browser)
   --url URL           Vite server for --browser (default: http://127.0.0.1:5173)
-  --compare FILE      Compare against a completed browser reference with the same plan
+  --compare FILE      Compare against a completed 1x browser reference with the same plan
   --tolerance RATE    Allowed difference per outcome (default: 0.05 = 5 percentage points)
   --help              Show this help
 
 Results describe the first named bot. Slots alternate, seeds differ for every sample.
-Browser references run in real time. A comparison exits 0 for equivalent, 1 for different/error,
-or 2 for inconclusive. Large samples do not remove systematic timing bias.
+Browser speed changes worker timing; accelerated runs are not 1x references. A comparison exits
+0 for equivalent, 1 for different/error, or 2 for inconclusive. Large samples do not remove bias.
 `;
 
 export function parseSimulationOptions(args: string[]) {
@@ -44,6 +45,7 @@ export function parseSimulationOptions(args: string[]) {
       replays: { type: 'string' },
       out: { type: 'string' },
       browser: { type: 'boolean', default: false },
+      'browser-speed': { type: 'string' },
       url: { type: 'string', default: 'http://127.0.0.1:5173' },
       compare: { type: 'string' },
       tolerance: { type: 'string', default: '0.05' },
@@ -57,8 +59,11 @@ export function parseSimulationOptions(args: string[]) {
     throw new Error('Choose --rounds or --matches, not both.');
   if (values.target !== undefined && values.matches === undefined)
     throw new Error('--target requires --matches.');
-  if (values.browser && (values.compare || values.replays))
-    throw new Error('--compare and --replays are for in-process runs.');
+  if (values.browser && values.replays) throw new Error('--replays is for in-process runs.');
+  if (values['browser-speed'] !== undefined && !values.browser)
+    throw new Error('--browser-speed requires --browser.');
+  const browserSpeed = Number(values['browser-speed'] ?? 1);
+  validateBrowserSpeed(browserSpeed);
   const canonicalPath = (file: string) => {
     const resolved = path.resolve(file);
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
@@ -83,5 +88,5 @@ export function parseSimulationOptions(args: string[]) {
   validateSimulationPlan(plan);
   const tolerance = Number(values.tolerance);
   if (!(tolerance > 0 && tolerance < 1)) throw new Error('Tolerance must be between 0 and 1.');
-  return { ...values, help: false, plan, tolerance };
+  return { ...values, help: false, plan, tolerance, browserSpeed };
 }

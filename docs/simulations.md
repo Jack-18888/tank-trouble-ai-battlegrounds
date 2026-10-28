@@ -17,28 +17,29 @@ are needed. Custom registered bots are available automatically.
 The two positional arguments are registered bot IDs, such as `easy`, `medium`, or `hard`.
 Choose either independent rounds or whole matches; omitting both count options runs one round.
 
-| Option             | Default                 | Meaning                                                            |
-| ------------------ | ----------------------- | ------------------------------------------------------------------ |
-| `--rounds N`       | `1`                     | Sample N independent rounds                                        |
-| `--matches N`      | Unset                   | Sample N whole matches instead of independent rounds               |
-| `--target N`       | `5` for matches         | First to 3, 5, or 10 wins; requires `--matches`                    |
-| `--max-rounds N`   | `100`                   | Maximum rounds per match before reporting it as capped             |
-| `--seed TEXT`      | `simulation`            | Reproducible batch seed                                            |
-| `--size SIZE`      | `classic`               | `compact`, `classic`, or `large`                                   |
-| `--density VALUE`  | `balanced`              | `open`, `balanced`, or `dense`                                     |
-| `--no-powerups`    | Pickups enabled         | Disable pickups                                                    |
-| `--fixed-sides`    | Slots alternate         | Keep the first named bot in roster slot zero                       |
-| `--replays DIR`    | Recording disabled      | Save each completed round as a `.ttr.json` file                    |
-| `--out FILE`       | Console only            | Write the JSON report; an existing report at this path is replaced |
-| `--browser`        | In-process execution    | Collect a real-time browser reference; requires Vite and Chrome    |
-| `--url URL`        | `http://127.0.0.1:5173` | Vite development server used by `--browser`                        |
-| `--compare FILE`   | Unset                   | Compare headless outcomes with a completed browser report          |
-| `--tolerance RATE` | `0.05`                  | Allowed difference per outcome as a fraction                       |
-| `--help`           | Unset                   | Print usage and options                                            |
+| Option              | Default                 | Meaning                                                                   |
+| ------------------- | ----------------------- | ------------------------------------------------------------------------- |
+| `--rounds N`        | `1`                     | Sample N independent rounds                                               |
+| `--matches N`       | Unset                   | Sample N whole matches instead of independent rounds                      |
+| `--target N`        | `5` for matches         | First to 3, 5, or 10 wins; requires `--matches`                           |
+| `--max-rounds N`    | `100`                   | Maximum rounds per match before reporting it as capped                    |
+| `--seed TEXT`       | `simulation`            | Reproducible batch seed                                                   |
+| `--size SIZE`       | `classic`               | `compact`, `classic`, or `large`                                          |
+| `--density VALUE`   | `balanced`              | `open`, `balanced`, or `dense`                                            |
+| `--no-powerups`     | Pickups enabled         | Disable pickups                                                           |
+| `--fixed-sides`     | Slots alternate         | Keep the first named bot in roster slot zero                              |
+| `--replays DIR`     | Recording disabled      | Save each completed round as a `.ttr.json` file                           |
+| `--out FILE`        | Console only            | Write the JSON report; an existing report at this path is replaced        |
+| `--browser`         | In-process execution    | Run browser workers; requires Vite and Chrome                             |
+| `--browser-speed N` | `1`                     | Requested simulation speed from 1 to 64; requires `--browser`             |
+| `--url URL`         | `http://127.0.0.1:5173` | Vite development server used by `--browser`                               |
+| `--compare FILE`    | Unset                   | Compare headless or accelerated browser outcomes with a 1x browser report |
+| `--tolerance RATE`  | `0.05`                  | Allowed difference per outcome as a fraction                              |
+| `--help`            | Unset                   | Print usage and options                                                   |
 
 Counts and round limits must be positive integers. The uppercased batch seed plus `:INDEX`
 must fit the replay format's 128-character limit. `--browser` cannot be combined with
-`--compare` or `--replays`, and `--out` cannot overwrite the reference passed to `--compare`.
+`--replays`, and `--out` cannot overwrite the reference passed to `--compare`.
 
 For example, sample compact open maps with pickups disabled:
 
@@ -84,17 +85,18 @@ when enabled. They are measurements of the current run, not guaranteed performan
 
 With `--out`, the report contains:
 
-| Field               | Meaning                                                                             |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `format`, `version` | `tank-trouble-simulation`, version `1`                                              |
-| `execution`         | `in-process` or `browser-workers`                                                   |
-| `environment`       | Node.js version or browser user agent                                               |
-| `sourceHash`        | SHA-256 of source, tooling, browser fixture, and dependency lockfile                |
-| `plan`              | Bots, count, seed, map settings, target, round limit, and slot policy               |
-| `results`           | One entry per completed or capped sample                                            |
-| `elapsedMs`         | Wall-clock duration of the run in milliseconds                                      |
-| `summary`           | Completed/capped counts and win/tie/loss rates with intervals                       |
-| `comparison`        | Present after a successful comparison computation, including an inconclusive result |
+| Field               | Meaning                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| `format`, `version` | `tank-trouble-simulation`, version `1`                                                             |
+| `execution`         | `in-process` or `browser-workers`                                                                  |
+| `environment`       | Node.js version or browser user agent                                                              |
+| `browserSpeed`      | Requested browser speed; omitted for in-process runs, and absent in older browser reports means 1x |
+| `sourceHash`        | SHA-256 of source, tooling, browser fixture, and dependency lockfile                               |
+| `plan`              | Bots, count, seed, map settings, target, round limit, and slot policy                              |
+| `results`           | One entry per completed or capped sample                                                           |
+| `elapsedMs`         | Wall-clock duration of the run in milliseconds                                                     |
+| `summary`           | Completed/capped counts and win/tie/loss rates with intervals                                      |
+| `comparison`        | Present after a successful comparison computation, including an inconclusive result                |
 
 Each result includes `index`, `seed`, `swapped`, `outcome`, `rounds`, `winnerId`, `scores`,
 `kills`, and `simulatedSeconds`. `outcome` describes the first named bot; `winnerId`,
@@ -126,9 +128,9 @@ npm run simulate -- medium hard --rounds 1000 --seed benchmark --browser --out .
 npm run simulate -- medium hard --rounds 1000 --seed benchmark --compare .qa/browser.json --out .qa/headless.json
 ```
 
-Chrome/Chromium is detected automatically; set `CHROME_PATH` if necessary. The reference collector
-uses a rendered 960-by-640 arena in headless Chromium and runs samples sequentially **at real time**.
-It does not accelerate physics or remove worker delays. Large references can take hours. Results are
+Chrome/Chromium is detected automatically; set `CHROME_PATH` if necessary. The collector
+uses a rendered 960-by-640 arena in headless Chromium and runs samples sequentially.
+The default `--browser-speed 1` runs **at real time**, retaining normal worker timing. Large references can take hours. Results are
 checkpointed after each sample, but incomplete references cannot establish equivalence. Use `--url`
 if Vite is served elsewhere. The collector requires development source modules, not a production
 preview server. Its dedicated fixture omits the game's surrounding settings and audio UI, so its
@@ -138,6 +140,39 @@ The JSON reports retain the full plan, outcomes, roster scores/kills, environmen
 and timings. Comparison requires matching plans, all planned samples, the same source fingerprint,
 and no capped matches. Collect both reports from the same checkout and do not edit code between runs.
 Reference collection deliberately uses a separate browser profile, cleaned up after completion.
+
+### Accelerated browser runs
+
+Pass `--browser-speed 2` or `--browser-speed 4` to request faster execution:
+
+```sh
+npm run simulate -- medium hard --rounds 100 --seed speed-check --browser --browser-speed 4 --out .qa/browser-4x.json
+```
+
+Speed must be a finite number from 1 to 64; fractional multipliers such as 2.5 are accepted.
+The multiplier scales simulated time accumulated per rendered frame. Physics still advances in
+1/120-second ticks, observations stay at 30 Hz of simulated time, and the renderer draws once per
+browser frame. Each frame processes at most 120 physics ticks before yielding to worker replies
+and rendering. CPU and rendering costs can make achieved throughput lower than the requested speed;
+the console and report distinguish the requested `browserSpeed` from measured wall time.
+Worker watchdogs continue to use real unpaused wall time.
+
+Acceleration can change which physics ticks receive bot replies and which pending observations
+workers skip. It therefore changes the sampled execution conditions. Accelerated reports cannot
+be passed as the `--compare` reference for normal browser play, even if another accelerated run
+previously passed a comparison. Use a 1x reference for each validation instead.
+
+To compare acceleration against normal timing, collect both runs with the same plan and source:
+
+```sh
+npm run simulate -- medium hard --rounds 100 --seed speed-check --browser --out .qa/browser-1x.json
+npm run simulate -- medium hard --rounds 100 --seed speed-check --browser --browser-speed 4 --compare .qa/browser-1x.json --out .qa/browser-4x.json
+```
+
+The comparison records candidate and reference execution modes and speeds. Its tolerance and
+confidence rules are the same as for the headless comparison. A small comparison may be
+inconclusive; requested speed alone does not establish statistical agreement. Historical reports
+without `browserSpeed` are read as 1x browser reports, since earlier CLI versions supported only 1x.
 
 The ordinary summary reports per-outcome 95% Wilson confidence intervals. Comparison pairs the
 same seeds and slots, counts positive/negative outcome disagreements, and subtracts conservative
@@ -188,17 +223,18 @@ headless batch before relying on headless results as a substitute for browser ou
 
 ## Troubleshooting
 
-| Message or situation             | Action                                                              |
-| -------------------------------- | ------------------------------------------------------------------- |
-| Unknown bot ID                   | Check the registrations in `src/bots/index.ts`                      |
-| Synchronous decisions required   | Use a synchronous bot; async strategies need the browser path       |
-| A bot failed                     | Fix the controller error; failures are not counted as losses        |
-| Replay file already exists       | Choose a fresh directory for `--replays`                            |
-| Vite reference page not found    | Run `npm run dev` from this checkout and check `--url`              |
-| Chromium not found               | Set `CHROME_PATH` to the browser executable                         |
-| Source revision or plan mismatch | Collect reports from the same code with identical CLI settings      |
-| Capped matches block comparison  | Choose a larger `--max-rounds` for both reference and headless runs |
-| Comparison is inconclusive       | Inspect the intervals; a larger preplanned sample may be needed     |
+| Message or situation             | Action                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| Unknown bot ID                   | Check the registrations in `src/bots/index.ts`                              |
+| Synchronous decisions required   | Use a synchronous bot; async strategies need the browser path               |
+| A bot failed                     | Fix the controller error; failures are not counted as losses                |
+| Replay file already exists       | Choose a fresh directory for `--replays`                                    |
+| Vite reference page not found    | Run `npm run dev` from this checkout and check `--url`                      |
+| Chromium not found               | Set `CHROME_PATH` to the browser executable                                 |
+| Source revision or plan mismatch | Collect reports from the same code with identical CLI settings              |
+| A 1x reference is required       | Use a normal-speed browser report as `--compare`, not an accelerated report |
+| Capped matches block comparison  | Choose a larger `--max-rounds` for both reference and headless runs         |
+| Comparison is inconclusive       | Inspect the intervals; a larger preplanned sample may be needed             |
 
 The reusable agent workflow is in
 [`run-bot-simulations`](../.agents/skills/run-bot-simulations/SKILL.md).

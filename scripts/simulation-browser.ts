@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { SimulationPlan, SimulationResult } from '../src/simulation.ts';
+import { validateBrowserSpeed } from '../src/simulation.ts';
 
 interface CdpReply {
   id?: number;
@@ -20,7 +21,9 @@ export async function collectBrowserResults(
   plan: SimulationPlan,
   url: string,
   onResult: (result: SimulationResult, environment: string) => Promise<void>,
+  browserSpeed = 1,
 ): Promise<string> {
+  validateBrowserSpeed(browserSpeed);
   const chrome =
     process.env.CHROME_PATH ||
     [
@@ -150,7 +153,7 @@ export async function collectBrowserResults(
     const environment = await evaluate<string>('navigator.userAgent');
     for (let index = 0; index < plan.count; index++) {
       await evaluate(
-        `(async () => { const fixture = ${module}; fixture.start(${JSON.stringify(plan)}, ${index}); })()`,
+        `(async () => { const fixture = ${module}; fixture.start(${JSON.stringify(plan)}, ${index}, ${browserSpeed}); })()`,
       );
       const deadline = Date.now() + (plan.target === 0 ? 1 : plan.maxRounds) * 150_000;
       while (true) {

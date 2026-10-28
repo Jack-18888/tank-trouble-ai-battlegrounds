@@ -141,10 +141,38 @@ test('CLI rejects ambiguous modes, unknown settings, and invalid counts', () => 
     ['--tolerance', '0'],
     ['--tolerance', '1'],
     ['--browser', '--replays', '.qa/replays'],
+    ['--browser-speed', '4'],
+    ['--browser', '--browser-speed', '0'],
+    ['--browser', '--browser-speed', '0.5'],
+    ['--browser', '--browser-speed', '-1'],
+    ['--browser', '--browser-speed', 'NaN'],
+    ['--browser', '--browser-speed', 'Infinity'],
+    ['--browser', '--browser-speed', '65'],
     ['--compare', '.qa/reference.json', '--out', '.qa/reference.json'],
     ['--seed', 's'.repeat(128)],
   ])
     assert.throws(() => parseSimulationOptions(['medium', 'hard', ...flags]));
+});
+
+test('browser speed defaults to 1x and can compare accelerated browser runs with a reference', () => {
+  const baseline = parseSimulationOptions(['medium', 'hard', '--browser']);
+  assert.equal(baseline.help, false);
+  if (baseline.help) throw new Error('Unexpected help');
+  assert.equal(baseline.browserSpeed, 1);
+  const accelerated = parseSimulationOptions([
+    'medium',
+    'hard',
+    '--browser',
+    '--browser-speed',
+    '4',
+    '--compare',
+    '.qa/browser-1x.json',
+  ]);
+  assert.equal(accelerated.help, false);
+  if (accelerated.help) throw new Error('Unexpected help');
+  assert.equal(accelerated.browserSpeed, 4);
+  assert.equal(accelerated.compare, '.qa/browser-1x.json');
+  assert.deepEqual(accelerated.plan, baseline.plan);
 });
 
 function reports(count: number, different = false): [SimulationReport, SimulationReport] {
@@ -209,4 +237,31 @@ test('comparison rejects mismatched plans, revisions, incomplete samples, and ca
     mutate(browser);
     assert.throws(() => compareReports(headless, browser));
   }
+});
+
+test('accelerated browser reports are candidates, never normal-play reference reports', () => {
+  const [candidate, baseline] = reports(1000);
+  candidate.execution = 'browser-workers';
+  candidate.browserSpeed = 4;
+  baseline.browserSpeed = 1;
+  const comparison = compareReports(candidate, baseline);
+  assert.equal(comparison.status, 'equivalent');
+  assert.deepEqual(comparison.candidate, { execution: 'browser-workers', browserSpeed: 4 });
+  assert.deepEqual(comparison.reference, { execution: 'browser-workers', browserSpeed: 1 });
+  baseline.browserSpeed = 4;
+  assert.throws(() => compareReports(candidate, baseline), /1x browser reference/);
+  candidate.execution = 'in-process';
+  delete candidate.browserSpeed;
+  assert.throws(() => compareReports(candidate, baseline), /1x browser reference/);
+});
+
+test('comparison accepts legacy 1x references and rejects invalid speed metadata', () => {
+  const [candidate, baseline] = reports(10);
+  assert.equal(compareReports(candidate, baseline).reference.browserSpeed, 1);
+  baseline.browserSpeed = 0;
+  assert.throws(() => compareReports(candidate, baseline), /Browser speed/);
+  baseline.browserSpeed = 1;
+  candidate.execution = 'browser-workers';
+  candidate.browserSpeed = Infinity;
+  assert.throws(() => compareReports(candidate, baseline), /Browser speed/);
 });

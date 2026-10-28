@@ -34,6 +34,7 @@ try {
       version: 1,
       execution: options.browser ? 'browser-workers' : 'in-process',
       environment: process.version,
+      browserSpeed: options.browser ? options.browserSpeed : undefined,
       sourceHash: hash.digest('hex'),
       plan: options.plan,
       results: [],
@@ -51,6 +52,7 @@ try {
       }
     };
     if (options.browser) {
+      console.error(`Browser speed: ${options.browserSpeed}x requested`);
       const { collectBrowserResults } = await import('./simulation-browser.ts');
       report.environment = await collectBrowserResults(
         options.plan,
@@ -63,6 +65,7 @@ try {
           );
           await save();
         },
+        options.browserSpeed,
       );
     } else {
       const replayDir = options.replays ? path.resolve(options.replays) : undefined;

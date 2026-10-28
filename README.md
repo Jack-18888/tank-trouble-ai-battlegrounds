@@ -128,6 +128,9 @@ browser reference collector compares rate differences against a default toleranc
 points, with confidence intervals and an explicit inconclusive result for insufficient evidence.
 See [headless simulations and browser comparison](docs/simulations.md) for options and validation.
 
+Browser runs can request acceleration with `--browser --browser-speed 4`. The default remains 1x;
+reports retain the requested speed, and comparisons against normal browser play require a 1x reference.
+
 ## Browser verification
 
 With the development server running and Chrome or Chromium installed:

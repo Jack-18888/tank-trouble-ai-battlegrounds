@@ -48,10 +48,14 @@ npm run simulate -- medium hard --rounds 1000 --seed benchmark --browser --out .
 npm run simulate -- medium hard --rounds 1000 --seed benchmark --compare .qa/browser.json --out .qa/headless.json
 ```
 
-Browser collection uses real-time workers and a rendered reference arena; a large batch can
-take hours. State the expected duration before starting a long collection, using observed
-round durations when available. Do not accelerate that reference or substitute simulated
-worker delays for measured browser results. `CHROME_PATH` selects Chromium; `--url` selects
+Browser collection uses workers and a rendered reference arena. The default `--browser-speed 1`
+is the real-time reference; a large batch can take hours. State the expected duration before starting a long collection, using observed
+round durations when available. Keep the normal-play reference at 1x. For accelerated experiments,
+use `--browser-speed 2` or `--browser-speed 4`; the CLI supports finite speeds from 1 to 64.
+These runs change worker timing and must be compared against a matching 1x report before making
+claims about normal play. For example, add `--browser --browser-speed 4 --compare .qa/browser.json`
+to the same matchup and experiment options. An accelerated report cannot serve as the reference
+even after a previous comparison passes. Do not substitute simulated worker delays for browser results. `CHROME_PATH` selects Chromium; `--url` selects
 the Vite development server. The production preview server does not expose the required modules.
 
 Keep source, tooling, fixtures, and the lockfile unchanged between reference and headless runs:
@@ -67,7 +71,8 @@ samples rather than repeatedly sampling until a comparison passes.
 ## Report the evidence
 
 Give the named-bot perspective, sample unit and count, seed/settings, capped count, outcome
-counts and rates, confidence intervals, execution environment, and comparison status when present.
+counts and rates, confidence intervals, execution environment, requested `browserSpeed` for browser
+runs, measured throughput, and comparison status when present.
 `outcome` follows the first named bot, but `winnerId`, `scores`, and `kills` follow roster order;
 account for `swapped` when examining those fields.
 

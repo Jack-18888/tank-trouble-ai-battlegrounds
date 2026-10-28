@@ -1,4 +1,4 @@
-import { BotSimulation, SIMULATION_DT } from '../../src/simulation.ts';
+import { BotSimulation, SIMULATION_DT, validateBrowserSpeed } from '../../src/simulation.ts';
 import type { SimulationPlan, SimulationResult } from '../../src/simulation.ts';
 import { browserBotConnection } from '../../src/players/browser-connection.ts';
 import { Renderer } from '../../src/renderer.ts';
@@ -11,8 +11,9 @@ let status: { result: SimulationResult | null; error: string | null } = {
   error: null,
 };
 
-/** Real-time reference: same RAF accumulator, renderer, worker factory, and tick size as main.ts. */
-export function start(plan: SimulationPlan, index: number): void {
+/** At 1x, uses main.ts's real-time accumulator. Faster modes scale time, retaining fixed ticks. */
+export function start(plan: SimulationPlan, index: number, browserSpeed = 1): void {
+  validateBrowserSpeed(browserSpeed);
   stop();
   status = { result: null, error: null };
   simulation = new BotSimulation(plan, index, false, browserBotConnection);
@@ -25,9 +26,14 @@ export function start(plan: SimulationPlan, index: number): void {
   const frame = (time: number) => {
     if (!simulation || !renderer) return;
     try {
-      accumulator += Math.min((time - (previous || time)) / 1000, 0.1);
+      accumulator += Math.min((time - (previous || time)) / 1000, 0.1) * browserSpeed;
       previous = time;
-      while (accumulator >= SIMULATION_DT && !simulation.result) {
+      // Bound each batch so higher requested speeds still yield to worker replies and rendering.
+      for (
+        let steps = 0;
+        accumulator >= SIMULATION_DT && !simulation.result && steps < 120;
+        steps++
+      ) {
         simulation.step();
         accumulator -= SIMULATION_DT;
       }
