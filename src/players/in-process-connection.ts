@@ -15,6 +15,10 @@ export class InProcessConnection implements PlayerConnection {
   private busy = false;
   private closed = false;
   private pending?: WorldFrame;
+  /** True while an asynchronous decision is unresolved; fast synchronous runners must not race it. */
+  get hasPendingDecision(): boolean {
+    return this.busy;
+  }
   constructor(
     init: RoundInit,
     private readonly events: ConnectionEvents,

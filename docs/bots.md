@@ -156,6 +156,6 @@ game.start();
 runtime.step(1 / 120);
 ```
 
-The adapter supports deterministic fixed-input tests and asynchronous strategy tests. It does not provide CPU isolation; browser matches always use the worker factory. Seeded maps and fixed-command physics are reproducible, while live worker arrival timing can vary. Exact match recording/replay is not included.
+The adapter supports deterministic fixed-input tests and asynchronous strategy tests. It does not provide CPU isolation; browser matches always use the worker factory. Seeded maps and fixed-command physics are reproducible, while live worker arrival timing can vary. For fast synchronous batches, compatible replay export, and statistical browser comparison, see [headless simulations](simulations.md).
 
 Match statistics expose `game.scores` (round wins) and `game.kills` (opponent eliminations across all rounds). Both reset when a new match starts. Observations provide the same match totals as `context.match.scores` and `context.match.kills`; `context.self.kills` remains the current round’s count. Eliminated players can still earn credit from their remaining shells, while shield hits and self-inflicted ricochets do not add kills.

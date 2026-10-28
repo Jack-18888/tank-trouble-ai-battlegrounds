@@ -111,6 +111,23 @@ Seeded maps and deterministic physics remain supported. Live worker reply timing
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 
+## Headless bot matches
+
+Run bots directly in Node.js, as fast as the CPU permits, with optional compatible round replays:
+
+```sh
+npm run simulate -- medium hard --rounds 1000 --seed benchmark --out .qa/results.json
+npm run simulate -- medium hard --matches 10 --target 3
+npm run simulate -- easy hard --rounds 1 --replays .qa/sample-replays
+```
+
+Starting slots alternate, and win/tie/loss statistics describe the first named bot. The runner uses
+the existing 120 Hz engine and in-process synchronous bot adapter. A seed does not guarantee parity
+with asynchronous browser matches; statistical agreement must be measured. An optional real-time
+browser reference collector compares rate differences against a default tolerance of 5 percentage
+points, with confidence intervals and an explicit inconclusive result for insufficient evidence.
+See [headless simulations and browser comparison](docs/simulations.md) for options and validation.
+
 ## Browser verification
 
 With the development server running and Chrome or Chromium installed:
