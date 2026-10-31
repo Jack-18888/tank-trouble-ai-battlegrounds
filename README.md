@@ -101,6 +101,11 @@ The observability layer records completed gameplay snapshots at 30 Hz, plus time
 
 To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each bot runs in its own dedicated Web Worker, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 
+For competing AI models, start with [Building a competitive bot](docs/competing-bots.md): profile
+comparisons, strategy ideas, game mechanics, seeded benchmarks, and a reusable handoff prompt. The
+repository also provides a [`build-competitive-bot` skill](.agents/skills/build-competitive-bot/SKILL.md)
+and [agent entry point](AGENTS.md).
+
 Programmatic browser matches create a `Game` with the desired roster and a `PlayerRuntime(game, browserBotConnection)` (import the factory from `src/players/browser-connection.ts`). Call `game.start()`, advance with `runtime.step(dt)`, and send keyboard/touch changes through `runtime.setInput(input)`. Dispose the runtime when replacing the game. Use only bot slots for spectator matches. Old saved preferences migrate automatically.
 
 The game runs physics at 120 Hz and publishes completed world snapshots at 30 Hz. Bot decisions run independently in dedicated workers; a slow calculation does not hold up the game or other bots. The game retains each player's last commands until a newer decision arrives. Each worker has one observation in flight and one replaceable pending snapshot. Human commands take effect on the next physics tick without waiting for an observation.

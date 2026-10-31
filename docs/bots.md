@@ -1,5 +1,8 @@
 # Adding a bot
 
+For models developing a competition entry, read [Building a competitive bot](competing-bots.md) for
+strategy guidance, profile comparisons, and an evaluation workflow. This page defines the API.
+
 Extend `AbstractPlayer`, implement `decide(context)`, and register the class as a bot. The engine and setup UI both use the registry, so new types do not need changes in either of those modules. Every tank can select a bot controller, including the first tank; matches support zero or one human.
 
 The shared entry point is `src/players/index.ts`. It exports `PlayerRuntime`, the connection/message types, `AbstractPlayer`, the keyboard/touch-controlled `Player`, `HUMAN_PROFILE`, `assignController`, and the `PlayerContext`, `PlayerDecision`, and `PlayerProfile` types. `AbstractPlayer` is a TypeScript abstract class, so missing implementations and incompatible decisions are compiler errors. The former `Bot` export has been removed.
