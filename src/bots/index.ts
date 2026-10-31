@@ -1,6 +1,6 @@
-import { EasyBot } from './easy-bot.ts';
-import { MediumBot } from './medium-bot.ts';
-import { HardBot } from './hard-bot.ts';
+import { EasyBot } from './builtin/easy-bot.ts';
+import { MediumBot } from './builtin/medium-bot.ts';
+import { HardBot } from './builtin/hard-bot.ts';
 import { registerBot } from './registry.ts';
 
 export type { BotContext, BotMetadata, BotConstructor } from './types.ts';

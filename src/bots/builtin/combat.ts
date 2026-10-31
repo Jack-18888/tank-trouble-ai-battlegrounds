@@ -1,6 +1,6 @@
-import { angleDiff, clamp, distance } from '../math.ts';
-import type { BotContext } from './types.ts';
-import type { PlayerDecision, PlayerProfile } from '../players/types.ts';
+import { angleDiff, clamp, distance } from '../../math.ts';
+import type { BotContext } from '../types.ts';
+import type { PlayerDecision, PlayerProfile } from '../../players/types.ts';
 import { MazeNavigator } from './navigation.ts';
 
 /**

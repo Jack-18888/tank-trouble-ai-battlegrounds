@@ -1,6 +1,6 @@
-import { AbstractPlayer } from '../players/abstract-player.ts';
+import { AbstractPlayer } from '../../players/abstract-player.ts';
 import { CombatStrategy } from './combat.ts';
-import type { PlayerContext, PlayerDecision } from '../players/types.ts';
+import type { PlayerContext, PlayerDecision } from '../../players/types.ts';
 
 /** Fast pursuit and shell dodging with predictive aiming and bank-shot searches. */
 export class HardBot extends AbstractPlayer {

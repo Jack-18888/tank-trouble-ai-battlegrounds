@@ -83,7 +83,7 @@ The observability layer records completed gameplay snapshots at 30 Hz, plus time
 - `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
 - `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, queued player command application, swept projectile collisions, power-ups, and match state.
 - `src/players/`: shared abstract player contract, runtime, human/worker connections, bounded messaging, per-bot scheduling, profiles, and roster controller swaps.
-- `src/bots/`: Easy/Medium/Hard subclasses, shared combat strategy, and the registry used by the game and setup UI.
+- `src/bots/`: shared bot API and registry used by the game and setup UI; `builtin/` contains the Easy/Medium/Hard implementations and their combat/navigation helpers.
 - `src/scoreboard.ts`: live round-win, total kill, and current-round kill displays for every tank.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
 - `src/queries.ts`, `src/rules.ts`, `src/random.ts`: DOM-free pathfinding, visibility, shot prediction, rules, and seeded randomness shared with workers.

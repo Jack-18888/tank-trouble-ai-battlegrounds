@@ -47,7 +47,7 @@ it is not evidence of a stronger bot.
 ```ts
 import { AbstractPlayer } from '../players/abstract-player.ts';
 import type { PlayerContext, PlayerDecision } from '../players/types.ts';
-import { CombatStrategy } from './combat.ts';
+import { CombatStrategy } from './builtin/combat.ts';
 
 export class ContenderBot extends AbstractPlayer {
   private readonly strategy = new CombatStrategy(this.profile, { dodge: true, bank: true });
@@ -272,7 +272,7 @@ when the available evidence cannot establish a universal winner.
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | What can a controller read and return?                     | [`src/players/types.ts`](../src/players/types.ts), [`src/bots/types.ts`](../src/bots/types.ts), [bot API](bots.md)                                       |
 | How do profiles and decision timing work?                  | [`abstract-player.ts`](../src/players/abstract-player.ts), [`profile.ts`](../src/players/profile.ts), [`bot-brain.ts`](../src/players/bot-brain.ts)      |
-| What does Hard do today?                                   | [`hard-bot.ts`](../src/bots/hard-bot.ts), [`combat.ts`](../src/bots/combat.ts), [`navigation.ts`](../src/bots/navigation.ts)                             |
+| What does Hard do today?                                   | [`hard-bot.ts`](../src/bots/builtin/hard-bot.ts), [`combat.ts`](../src/bots/builtin/combat.ts), [`navigation.ts`](../src/bots/builtin/navigation.ts)     |
 | How exact are the queries and collisions?                  | [`src/queries.ts`](../src/queries.ts), [`src/geometry.ts`](../src/geometry.ts)                                                                           |
 | Where are ammo, firing, movement, and scoring implemented? | [`src/rules.ts`](../src/rules.ts), [`src/engine.ts`](../src/engine.ts)                                                                                   |
 | How should tests and evaluations run?                      | [`tests/bots.test.ts`](../tests/bots.test.ts), [`tests/helpers/game.ts`](../tests/helpers/game.ts), [simulations](simulations.md), [replays](replays.md) |

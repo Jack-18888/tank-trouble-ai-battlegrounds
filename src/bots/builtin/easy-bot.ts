@@ -1,6 +1,6 @@
-import { AbstractPlayer } from '../players/abstract-player.ts';
+import { AbstractPlayer } from '../../players/abstract-player.ts';
 import { CombatStrategy } from './combat.ts';
-import type { PlayerContext, PlayerDecision } from '../players/types.ts';
+import type { PlayerContext, PlayerDecision } from '../../players/types.ts';
 
 /** Slow maze pursuit with imprecise aim and an extra chance to hesitate before firing. */
 export class EasyBot extends AbstractPlayer {

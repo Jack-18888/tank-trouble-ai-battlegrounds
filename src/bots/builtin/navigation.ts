@@ -1,6 +1,6 @@
-import { distance } from '../math.ts';
-import type { Point } from '../types.ts';
-import type { BotContext } from './types.ts';
+import { distance } from '../../math.ts';
+import type { Point } from '../../types.ts';
+import type { BotContext } from '../types.ts';
 
 // Keep following a cell center after crossing into that cell. Rebuilding the
 // next waypoint from cellAt(self) each decision makes a tank turn back toward
