@@ -26,10 +26,10 @@ For ordinary bot development:
   engine-enforced tournament rule.
 - Scope changes to the strategy, its registration, and relevant tests. Changes to shared physics,
   scheduling, observations, or opponents need an explicit task reason.
-- Use [the simulation guide](docs/simulations.md) for benchmarks. The CLI currently compares two
-  bots using Node workers; both synchronous and asynchronous decisions are supported. Use separate
-  browser/programmatic fixtures for 3–6-player evaluation. `InProcessConnection` is a test adapter,
-  not the production path for enforcing CPU isolation or decision deadlines.
+- Use [the simulation guide](docs/simulations.md) for benchmarks. The CLI supports 2–6 bots using
+  Node workers; both synchronous and asynchronous decisions are supported. Starting slots rotate
+  across the full roster, and per-entry summaries preserve repeated bot IDs. `InProcessConnection`
+  is a test adapter, not the production path for enforcing CPU isolation or decision deadlines.
 - Report measured outcomes, seeds, settings, profile, and execution mode. Distinguish small smoke
   tests from evidence of strength, and headless measurements from browser measurements. Include
   requested/achieved speed and per-player deadline misses, busy skips, and invalid-plan counts;

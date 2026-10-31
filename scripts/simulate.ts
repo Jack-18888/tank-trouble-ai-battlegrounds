@@ -49,7 +49,11 @@ try {
         await mkdir(path.dirname(path.resolve(options.out)), { recursive: true });
         await writeFile(
           options.out,
-          JSON.stringify({ ...report, summary: summarizeResults(report.results) }, null, 2) + '\n',
+          JSON.stringify(
+            { ...report, summary: summarizeResults(report.results, report.plan) },
+            null,
+            2,
+          ) + '\n',
         );
       }
     };
@@ -92,14 +96,23 @@ try {
       }
     }
     await save();
-    const summary = summarizeResults(report.results);
+    const summary = summarizeResults(report.results, report.plan);
     console.log(
-      `${options.plan.bots[0]} vs ${options.plan.bots[1]}: ${summary.completed} completed, ${summary.capped} capped`,
+      `${options.plan.bots.join(' vs ')}: ${summary.completed} completed, ${summary.capped} capped`,
     );
     for (const [outcome, value] of Object.entries(summary.rates)) {
       const percent = (rate: number) => `${(100 * rate).toFixed(1)}%`;
       console.log(
         `${outcome}: ${value.count} (${percent(value.rate)}; 95% interval ${value.interval.map(percent).join(' to ')})`,
+      );
+    }
+    for (const player of summary.players ?? []) {
+      const stats = player.decisionStatistics;
+      console.log(
+        `Entry ${player.botIndex + 1} (${player.botId}): ${player.rates.win.count} wins, ${player.rates.tie.count} ties, ${player.rates.loss.count} losses; ${player.roundWins} round wins, ${player.kills} kills`,
+      );
+      console.log(
+        `  Decisions: ${stats.requests} requests, ${stats.deadlineMisses} deadline misses, ${stats.busySkips} busy skips, ${stats.invalidPlans} invalid plans, ${stats.lateReplies} late replies`,
       );
     }
     const simulated = report.results.reduce((sum, result) => sum + result.simulatedSeconds, 0);

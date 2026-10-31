@@ -7,7 +7,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { recordedRound } from '../tests/helpers/replay.ts';
 import { serializeReplay } from '../src/replay.ts';
-import { collectTickTrace } from '../tests/helpers/tick-trace.ts';
+import { collectSimulationTrace, collectTickTrace } from '../tests/helpers/tick-trace.ts';
 import { InProcessConnection } from '../src/players/in-process-connection.ts';
 interface BrowserTarget {
   type: string;
@@ -620,15 +620,18 @@ try {
       'a thrown worker decision stops only its own tank',
     );
     await evaluate('window.__workerQA.dispose()');
-    const expectedTrace = await collectTickTrace(
-      (init, events) => new InProcessConnection(init, events),
-      64,
-    );
-    for (const batch of [1, 4, 64]) {
-      const browserTrace = await evaluate(`(async () => {
-        const { collectTickTrace } = await import('/tests/helpers/tick-trace.ts');
+    for (const botCount of [3, 6]) {
+      const collect = botCount === 3 ? collectTickTrace : collectSimulationTrace;
+      const expectedTrace = await collect(
+        (init, events) => new InProcessConnection(init, events),
+        64,
+      );
+      for (const batch of [1, 4, 64]) {
+        const browserTrace = await evaluate(`(async () => {
+        const { collectTickTrace, collectSimulationTrace } = await import('/tests/helpers/tick-trace.ts');
+        const collect = ${botCount} === 3 ? collectTickTrace : collectSimulationTrace;
         const { WorkerConnection } = await import('/src/players/worker-connection.ts');
-        return collectTickTrace((init, events) => {
+        return collect((init, events) => {
           const worker = new Worker('/tests/fixtures/bot.worker.ts', { type: 'module' });
           return new WorkerConnection(init, events, {
             listen(message, failure) { worker.onmessage = event => message(event.data); worker.onerror = event => failure(event.message); },
@@ -637,7 +640,12 @@ try {
           });
         }, ${batch});
       })()`);
-      assert.deepEqual(browserTrace, expectedTrace, `tick trace differs at batch ${batch}`);
+        assert.deepEqual(
+          browserTrace,
+          expectedTrace,
+          `${botCount}-bot tick trace differs at batch ${batch}`,
+        );
+      }
     }
     // A main-only registration is intentionally absent from the production worker catalog.
     // Its startup failure must stop one tank, show a notice, and leave the match running.

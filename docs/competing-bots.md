@@ -32,9 +32,10 @@ When there is no survival winner, a unique leader in **current-round kills** win
 a draw. That leader can be eliminated. Match wins depend on round wins, not match-long kill totals.
 Survival, aggression, and timeout play therefore need to be evaluated together.
 
-The game supports 2–6 tanks, while the existing simulation CLI accepts exactly two bot IDs. Duel
-results do not establish free-for-all strength. For a larger roster, use the setup UI or a separate
-fixture using `Game` and `PlayerRuntime`, and rotate roster slots.
+The game and simulation CLI support 2–6 tanks. Duel results do not establish free-for-all strength.
+Pass three to six bot IDs to `npm run simulate -- ...` to evaluate larger rosters. Starting slots
+rotate by default; use a multiple of the roster size to balance slots. Repeated bot IDs are supported,
+and per-entry summaries keep them distinct.
 
 ## Implement a valid competitor first
 
@@ -213,6 +214,7 @@ npm run simulate -- contender medium --rounds 200 --seed contender-medium --out 
 npm run simulate -- contender hard --rounds 100 --seed contender-compact --size compact --density open --no-powerups --out .qa/contender-compact.json
 npm run simulate -- contender hard --rounds 100 --seed contender-dense --size large --density dense --out .qa/contender-dense.json
 npm run simulate -- contender hard --matches 10 --target 3 --seed contender-matches --out .qa/contender-matches.json
+npm run simulate -- contender hard medium hard --rounds 200 --seed contender-ffa --out .qa/contender-ffa.json
 ```
 
 These sample sizes illustrate a staged workflow, not guaranteed statistical power. Select the
@@ -221,17 +223,27 @@ other submitted competitors when available, and previous versions or self-play w
 replays from small diagnostic batches rather than every throughput run. Inspect losses, draws,
 self-hits, and route stalls; high survival with almost all draws may still fail the match objective.
 
-The runner alternates slots by default; even counts balance them exactly. Results describe the
-**first named bot**, while raw `winnerId`, `scores`, and `kills` use roster order; check `swapped`.
+The runner rotates starting slots by default; a multiple of the roster size balances them exactly.
+Use `--fixed-sides` to retain the original order. Headline outcomes describe the **first named bot**,
+while `summary.players` reports each original entry separately, including repeated bot IDs. Raw
+`winnerId`, `scores`, `kills`, and decision diagnostics use actual roster order; `slotOrder[slot]`
+maps each slot back to its original index in `plan.bots`. For duels, rotation still alternates sides;
+the legacy `swapped` flag marks any nonzero rotation and cannot identify a larger roster's order.
 Retain outcome counts and 95% confidence intervals, not just win percentages. Match caps are
-excluded from outcome rates, so disclose the capped count. A controller error aborts evaluation;
-it is not an ordinary loss. Node and browser workers both support asynchronous decisions. Use seeded strategy randomness and inspect deadline-miss diagnostics.
+excluded from outcome rates, so disclose the capped count. `--matches N --target 0 --max-rounds R`
+runs bounded endless games, whose results are capped and have no overall winner. Scores, kills,
+and diagnostics still cover all completed rounds. A controller error aborts evaluation;
+it is not an ordinary loss. Node and browser workers both support asynchronous decisions. Use
+seeded strategy randomness and inspect deadline-miss diagnostics.
 Report v2 records the shared scheduling settings and per-player requests, deadline misses, busy
 skips, invalid plans, and late replies. Do not double-count late replies as additional missed plans.
 
 `--compare` has a narrower purpose: comparing execution modes using the **same bots, source
-fingerprint, and full plan**. It cannot compare v1 source against v2, or two different bot pairings.
-Scheduling metadata must also match; legacy reports cannot serve as references for the new scheduler.
+fingerprint, and full plan**, including sample mode and roster rotation. It cannot compare different
+strategy revisions or bot rosters. For larger rosters it checks every entry's outcomes, so changes
+in which opponent wins matter even when the first bot's loss rate is unchanged. Capped matches
+cannot establish equivalence. Scheduling metadata must also match; legacy reports cannot serve as
+references for the new scheduler.
 Preserve each version's reports and profile for strength comparisons; do not edit fingerprints or
 misuse the execution-equivalence result as a ranking test.
 

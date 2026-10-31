@@ -3,17 +3,17 @@ import path from 'node:path';
 import type { SimulationPlan } from '../src/simulation.ts';
 import { validateBrowserSpeed, validateSimulationPlan } from '../src/simulation.ts';
 
-export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [options]
+export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [BOT_C ... BOT_F] [options]
 
   --rounds N          Sample N independent rounds (default: 1)
   --matches N         Sample N whole matches instead
-  --target 3|5|10      Wins needed per match (default: 5; requires --matches)
+  --target 0|3|5|10    Wins needed per match; 0 is endless (default: 5; requires --matches)
   --max-rounds N      Cap each match (default: 100; capped matches are not ties)
   --seed TEXT         Batch seed (default: simulation)
   --size SIZE         compact, classic, large (default: classic)
   --density DENSITY   open, balanced, dense (default: balanced)
   --no-powerups       Disable pickups
-  --fixed-sides       Disable alternating starting slots
+  --fixed-sides       Disable rotating starting slots
   --replays DIR       Save each completed round as an existing .ttr.json replay
   --out FILE          Save results, settings, source fingerprint, and statistics as JSON
   --browser           Run browser workers instead (requires Vite/Chrome; default: real time)
@@ -23,7 +23,10 @@ export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [options]
   --tolerance RATE    Allowed difference per outcome (default: 0.05 = 5 percentage points)
   --help              Show this help
 
-Results describe the first named bot. Slots alternate, seeds differ for every sample.
+Use 2–6 registered bot IDs, including repeats; human controllers are not supported.
+Results include every named entry; win/tie/loss headlines describe the first entry.
+Slots rotate across the roster; use a multiple of the bot count for balanced starting slots.
+Seeds differ for every sample. Endless matches stop at --max-rounds and are reported as capped.
 Tick lengths stay fixed at every speed; 10 ms deadline misses can change outcomes between runs.
 Accelerated runs are not 1x references. A comparison exits
 0 for equivalent, 1 for different/error, or 2 for inconclusive. Large samples do not remove bias.
@@ -54,8 +57,8 @@ export function parseSimulationOptions(args: string[]) {
     },
   });
   if (values.help) return { help: true } as const;
-  if (positionals.length !== 2)
-    throw new Error('Provide exactly two bot IDs. Use --help for usage.');
+  if (positionals.length < 2 || positionals.length > 6)
+    throw new Error('Provide two to six bot IDs. Use --help for usage.');
   if (values.rounds !== undefined && values.matches !== undefined)
     throw new Error('Choose --rounds or --matches, not both.');
   if (values.target !== undefined && values.matches === undefined)
@@ -72,7 +75,8 @@ export function parseSimulationOptions(args: string[]) {
   if (values.compare && values.out && canonicalPath(values.compare) === canonicalPath(values.out))
     throw new Error('--out must not overwrite the browser reference used by --compare.');
   const plan: SimulationPlan = {
-    bots: [positionals[0], positionals[1]],
+    bots: positionals,
+    mode: values.matches === undefined ? 'rounds' : 'matches',
     count: Number(values.matches ?? values.rounds ?? 1),
     seed: values.seed,
     size: values.size as SimulationPlan['size'],
@@ -84,8 +88,6 @@ export function parseSimulationOptions(args: string[]) {
     maxRounds: Number(values['max-rounds']),
     swapSides: !values['fixed-sides'],
   };
-  if (values.matches !== undefined && plan.target === 0)
-    throw new Error('Whole matches need a target of 3, 5, or 10.');
   validateSimulationPlan(plan);
   const tolerance = Number(values.tolerance);
   if (!(tolerance > 0 && tolerance < 1)) throw new Error('Tolerance must be between 0 and 1.');

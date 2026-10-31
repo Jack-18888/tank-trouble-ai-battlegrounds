@@ -17,13 +17,16 @@ export const SIMULATION_SCHEDULING = Object.freeze({
 });
 export type Outcome = 'win' | 'tie' | 'loss';
 export interface SimulationPlan {
-  bots: [string, string];
+  /** Two to six registered bot IDs. Repeated IDs represent separate competitors. */
+  bots: string[];
+  /** Defaults to rounds for target 0, otherwise matches, for older programmatic callers. */
+  mode?: 'rounds' | 'matches';
   count: number;
   seed: string;
   size: GameConfig['size'];
   density: GameConfig['density'];
   powerups: boolean;
-  /** Zero samples independent single rounds; a positive target samples whole matches. */
+  /** Zero selects endless play; matches in that mode stop at maxRounds. */
   target: GameConfig['target'];
   maxRounds: number;
   swapSides: boolean;
@@ -32,6 +35,8 @@ export interface SimulationResult {
   index: number;
   seed: string;
   swapped: boolean;
+  /** Original plan bot index in each actual roster slot; absent in legacy duel results. */
+  slotOrder?: number[];
   /** Outcome from the perspective of the first named bot, independent of roster position. */
   outcome: Outcome | 'capped';
   rounds: number;
@@ -61,9 +66,26 @@ export function validateBrowserSpeed(speed: number): void {
     throw new Error('Browser speed must be a finite number between 1 and 64.');
 }
 
+export function simulationMode(plan: SimulationPlan): 'rounds' | 'matches' {
+  return plan.mode ?? (plan.target === 0 ? 'rounds' : 'matches');
+}
+
+/** Rotate each named entry through every starting slot, preserving duel side alternation. */
+export function simulationSlotOrder(plan: SimulationPlan, index: number): number[] {
+  const count = plan.bots.length;
+  const rotation = plan.swapSides ? index % count : 0;
+  return Array.from({ length: count }, (_, slot) => (slot - rotation + count) % count);
+}
+
 export function validateSimulationPlan(plan: SimulationPlan): void {
-  if (plan.bots.length !== 2 || !plan.bots.every(hasBot))
-    throw new Error('Choose two registered bot IDs.');
+  if (!Array.isArray(plan.bots) || plan.bots.length < 2 || plan.bots.length > 6)
+    throw new Error('Choose two to six registered bot IDs (no human controllers).');
+  if (!plan.bots.every(hasBot))
+    throw new Error('Choose registered bot IDs (no human controllers).');
+  if (plan.mode !== undefined && !['rounds', 'matches'].includes(plan.mode))
+    throw new Error('Simulation mode must be rounds or matches.');
+  if (simulationMode(plan) === 'rounds' && plan.target !== 0)
+    throw new Error('Independent rounds need target 0. Use matches for a win target.');
   if (!Number.isSafeInteger(plan.count) || plan.count < 1)
     throw new Error('The sample count must be a positive integer.');
   if (!Number.isSafeInteger(plan.maxRounds) || plan.maxRounds < 1)
@@ -90,6 +112,8 @@ export class BotSimulation {
   private readonly recorder: ReplayRecorder | null;
   private steps = 0;
   readonly seed: string;
+  readonly slotOrder: number[];
+  /** Legacy name: true whenever the roster has a nonzero rotation. */
   readonly swapped: boolean;
   private stepping = false;
 
@@ -104,8 +128,9 @@ export class BotSimulation {
     if (!Number.isSafeInteger(index) || index < 0 || index >= plan.count)
       throw new Error('Sample index is outside the plan.');
     this.seed = `${plan.seed}:${index}`;
-    this.swapped = plan.swapSides && index % 2 === 1;
-    const ids = this.swapped ? [...plan.bots].reverse() : plan.bots;
+    this.slotOrder = simulationSlotOrder(plan, index);
+    this.swapped = this.slotOrder[0] !== 0;
+    const ids = this.slotOrder.map((botIndex) => plan.bots[botIndex]);
     this.game = new Game(
       { ...plan, players: ids.map((botId) => ({ kind: 'bot', botId })) },
       this.seed,
@@ -138,19 +163,22 @@ export class BotSimulation {
       const ended = game.state === 'roundOver' || game.state === 'matchOver';
       if (
         ended &&
-        (this.plan.target === 0 || game.state === 'matchOver' || game.round >= this.plan.maxRounds)
+        (simulationMode(this.plan) === 'rounds' ||
+          game.state === 'matchOver' ||
+          game.round >= this.plan.maxRounds)
       ) {
-        const capped = this.plan.target !== 0 && game.state !== 'matchOver';
-        const winnerId = game.winner?.id ?? null;
+        const capped = simulationMode(this.plan) === 'matches' && game.state !== 'matchOver';
+        const winnerId = capped ? null : (game.winner?.id ?? null);
         this.result = {
           index: this.index,
           seed: this.seed,
           swapped: this.swapped,
+          slotOrder: [...this.slotOrder],
           outcome: capped
             ? 'capped'
             : winnerId === null
               ? 'tie'
-              : winnerId === (this.swapped ? 1 : 0)
+              : winnerId === this.slotOrder.indexOf(0)
                 ? 'win'
                 : 'loss',
           rounds: game.round,

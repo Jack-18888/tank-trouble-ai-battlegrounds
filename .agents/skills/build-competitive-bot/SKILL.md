@@ -62,13 +62,20 @@ and ammo-aware aggression are hypotheses to evaluate rather than a prescribed wi
 
 Use [the simulation workflow](../run-bot-simulations/SKILL.md) and
 [CLI documentation](../../../docs/simulations.md) when benchmarking. Start with a small smoke run,
-retain an earlier candidate, and reserve fresh seeds for confirmation. Alternate slots and inspect
-ties, caps, map settings, and opponents. The two-bot CLI cannot establish free-for-all strength.
+retain an earlier candidate, and reserve fresh seeds for confirmation. The CLI accepts 2–6 bot
+entries, including repeated IDs, and rotates starting slots by default. Use a multiple of the
+roster size to balance slots, unless fixed sides are requested. Inspect ties, caps, map settings,
+and opponents. Evaluate larger rosters explicitly when free-for-all strength matters; duel
+results alone do not establish it. `--matches N --target 0 --max-rounds R` runs bounded endless
+games, which are capped and excluded from outcome rates.
 
 The CLI runs isolated Node workers. `InProcessConnection` is an explicit local test adapter, not
 a production deadline-enforcement path. Keep reports/replays under ignored `.qa/` paths.
 Report v2 records scheduling and per-player request, deadline-miss, busy-skip, invalid-plan, and
-late-reply diagnostics; replay v1 remains a separate snapshot format.
+late-reply diagnostics; replay v1 remains a separate snapshot format. Raw results use actual
+roster slots. `slotOrder[slot]` maps each slot to its original index in `plan.bots`, and
+`summary.players` reports each original entry's rates, round wins, kills, and summed diagnostics.
+Use this mapping when slots rotate or bot IDs repeat.
 
 `--compare` tests execution modes on identical source, settings, and scheduling metadata, not
 old-bot-versus-new-bot strength. Normal-browser claims require a 1x reference. Speed changes pacing,

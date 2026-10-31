@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { SimulationPlan, SimulationResult } from '../src/simulation.ts';
-import { validateBrowserSpeed } from '../src/simulation.ts';
+import { simulationMode, validateBrowserSpeed } from '../src/simulation.ts';
 
 interface CdpReply {
   id?: number;
@@ -155,7 +155,8 @@ export async function collectBrowserResults(
       await evaluate(
         `(async () => { const fixture = ${module}; fixture.start(${JSON.stringify(plan)}, ${index}, ${browserSpeed}); })()`,
       );
-      const deadline = Date.now() + (plan.target === 0 ? 1 : plan.maxRounds) * 150_000;
+      const deadline =
+        Date.now() + (simulationMode(plan) === 'rounds' ? 1 : plan.maxRounds) * 150_000;
       while (true) {
         const status = await evaluate<{ result: SimulationResult | null; error: string | null }>(
           `(async () => (${module}).poll())()`,

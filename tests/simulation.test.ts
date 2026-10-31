@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BotSimulation, runSimulation as driveSimulation } from '../src/simulation.ts';
+import {
+  BotSimulation,
+  runSimulation as driveSimulation,
+  validateSimulationPlan,
+} from '../src/simulation.ts';
 import type { SimulationPlan, SimulationReport, SimulationResult } from '../src/simulation.ts';
 import {
   compareReports,
@@ -89,6 +93,85 @@ test('alternating slots retains outcomes from the first named bot perspective', 
   }
 });
 
+test('two to six bot entries rotate through every starting slot, including repeated IDs', async () => {
+  for (const count of [2, 3, 4, 5, 6]) {
+    const bots = Array.from({ length: count }, (_, i) => ['easy', 'medium', 'hard'][i % 3]);
+    for (let index = 0; index < count; index++) {
+      const rosterPlan = { ...plan, bots, count };
+      const simulation = new BotSimulation(rosterPlan, index, false, local, () => 0);
+      try {
+        assert.equal(simulation.game.tanks.length, count);
+        assert.equal(simulation.slotOrder.indexOf(0), index);
+        assert.deepEqual(
+          simulation.game.config.players,
+          simulation.slotOrder.map((botIndex) => ({ kind: 'bot', botId: bots[botIndex] })),
+        );
+        simulation.game.finishRound(simulation.game.tanks[index]);
+        const result = await simulation.step();
+        assert.equal(result?.outcome, 'win');
+        assert.equal(result?.winnerId, index);
+        assert.deepEqual(result?.slotOrder, simulation.slotOrder);
+        assert.equal(result?.scores.length, count);
+        assert.equal(result?.kills.length, count);
+      } finally {
+        simulation.dispose();
+      }
+    }
+    const fixed = new BotSimulation(
+      { ...plan, bots, count, swapSides: false },
+      count - 1,
+      false,
+      local,
+    );
+    assert.deepEqual(
+      fixed.slotOrder,
+      bots.map((_, index) => index),
+    );
+    fixed.dispose();
+  }
+});
+
+test('free-for-all outcomes distinguish another winner from a shared draw', async () => {
+  for (const winnerId of [0, null]) {
+    const simulation = new BotSimulation(
+      { ...plan, bots: ['easy', 'medium', 'hard'] },
+      1,
+      false,
+      local,
+      () => 0,
+    );
+    try {
+      simulation.game.finishRound(winnerId === null ? null : simulation.game.tanks[winnerId]);
+      assert.equal((await simulation.step())?.outcome, winnerId === null ? 'tie' : 'loss');
+    } finally {
+      simulation.dispose();
+    }
+  }
+});
+
+test('headless configurations preserve every bot-only browser gameplay setting', () => {
+  for (const size of ['compact', 'classic', 'large'] as const)
+    for (const density of ['open', 'balanced', 'dense'] as const)
+      for (const target of [0, 3, 5, 10] as const)
+        for (const powerups of [false, true]) {
+          const bots = ['easy', 'medium', 'hard', 'easy', 'medium', 'hard'];
+          const simulation = new BotSimulation(
+            { ...plan, bots, mode: 'matches', size, density, target, powerups },
+            0,
+            false,
+            local,
+          );
+          assert.deepEqual(simulation.game.config, {
+            players: bots.map((botId) => ({ kind: 'bot', botId })),
+            size,
+            density,
+            target,
+            powerups,
+          });
+          simulation.dispose();
+        }
+});
+
 test('whole matches finish at their win target and export every completed round', async () => {
   const rounds: RoundReplay[] = [];
   const result = await runSimulation({ ...plan, target: 3 }, 0, (replay) => rounds.push(replay));
@@ -121,6 +204,56 @@ test('round ties and capped matches remain distinct in batch statistics', async 
   assert.equal(summary.rates.win.rate, 0);
 });
 
+test('six-player endless matches advance rounds to the cap and export browser-compatible replays', async () => {
+  const replays: RoundReplay[] = [];
+  const endless: SimulationPlan = {
+    ...plan,
+    bots: Array<string>(6).fill('simulation-async'),
+    mode: 'matches',
+    target: 0,
+    maxRounds: 2,
+    powerups: false,
+  };
+  const result = await runSimulation(endless, 1, (replay) => replays.push(replay));
+  assert.equal(result.outcome, 'capped');
+  assert.equal(result.winnerId, null);
+  assert.equal(result.rounds, 2);
+  assert.equal(replays.length, 2);
+  assert.deepEqual(result.slotOrder, [5, 0, 1, 2, 3, 4]);
+  for (const [index, replay] of replays.entries()) {
+    const loaded = parseReplay(serializeReplay(replay));
+    assert.equal(loaded.round, index + 1);
+    assert.equal(loaded.config.players.length, 6);
+    assert.equal(loaded.config.target, 0);
+    assert.equal(loaded.frames.at(-1)?.state, 'roundOver');
+  }
+  assert.equal(result.decisionStatistics?.length, 6);
+  assert.ok(result.decisionStatistics?.every((stats) => stats.requests > 0));
+});
+
+test('a six-player match ends at its target and reports the rotated winner', async () => {
+  const simulation = new BotSimulation(
+    { ...plan, bots: Array<string>(6).fill('medium'), count: 6, mode: 'matches', target: 3 },
+    5,
+    false,
+    local,
+    () => 0,
+  );
+  try {
+    await simulation.step();
+    simulation.game.scores[5] = 2;
+    simulation.game.state = 'playing';
+    simulation.game.settleTimer = 0;
+    for (const tank of simulation.game.tanks) tank.alive = tank.id === 5;
+    const result = await simulation.step();
+    assert.equal(result?.outcome, 'win');
+    assert.equal(result?.winnerId, 5);
+    assert.equal(result?.scores[5], 3);
+  } finally {
+    simulation.dispose();
+  }
+});
+
 test('async strategies are supported and failures abort a benchmark', async () => {
   const result = await runSimulation(
     { ...plan, bots: ['simulation-async', 'simulation-idle'], powerups: false },
@@ -150,7 +283,7 @@ test('CLI rejects ambiguous modes, unknown settings, and invalid counts', () => 
     ['--rounds', 'NaN'],
     ['--rounds', '2', '--matches', '2'],
     ['--target', '3'],
-    ['--matches', '2', '--target', '0'],
+    ['--matches', '2', '--target', '2'],
     ['--size', 'huge'],
     ['--density', 'invalid'],
     ['--tolerance', '0'],
@@ -167,6 +300,122 @@ test('CLI rejects ambiguous modes, unknown settings, and invalid counts', () => 
     ['--seed', 's'.repeat(128)],
   ])
     assert.throws(() => parseSimulationOptions(['medium', 'hard', ...flags]));
+});
+
+test('CLI accepts full bot rosters and bounded endless matches, rejecting humans and invalid rosters', () => {
+  for (const count of [2, 3, 4, 5, 6]) {
+    const bots = Array<string>(count).fill('hard');
+    const parsed = parseSimulationOptions([
+      ...bots,
+      '--matches',
+      '2',
+      '--target',
+      '0',
+      '--max-rounds',
+      '3',
+      '--fixed-sides',
+    ]);
+    if (parsed.help) throw new Error('Unexpected help');
+    assert.deepEqual(parsed.plan.bots, bots);
+    assert.equal(parsed.plan.mode, 'matches');
+    assert.equal(parsed.plan.target, 0);
+    assert.equal(parsed.plan.maxRounds, 3);
+    assert.equal(parsed.plan.swapSides, false);
+  }
+  for (const bots of [
+    [],
+    ['hard'],
+    Array<string>(7).fill('hard'),
+    ['human', 'hard'],
+    ['easy', 'missing'],
+  ]) {
+    assert.throws(() => parseSimulationOptions(bots), /bot IDs/);
+    assert.throws(() => validateSimulationPlan({ ...plan, bots }), /bot IDs/);
+  }
+  assert.throws(() => validateSimulationPlan({ ...plan, mode: 'rounds', target: 3 }), /target 0/);
+});
+
+test('per-entry summaries map rotated slots, scores, kills and diagnostics back to repeated bot IDs', () => {
+  const rosterPlan: SimulationPlan = { ...plan, bots: ['hard', 'hard', 'easy'], count: 3 };
+  const results: SimulationResult[] = [
+    {
+      index: 0,
+      seed: 'summary:0',
+      swapped: false,
+      slotOrder: [0, 1, 2],
+      outcome: 'loss',
+      rounds: 1,
+      winnerId: 1,
+      scores: [0, 1, 0],
+      kills: [1, 2, 3],
+      simulatedSeconds: 1,
+    },
+    {
+      index: 1,
+      seed: 'summary:1',
+      swapped: true,
+      slotOrder: [2, 0, 1],
+      outcome: 'win',
+      rounds: 1,
+      winnerId: 1,
+      scores: [0, 1, 0],
+      kills: [4, 5, 6],
+      simulatedSeconds: 1,
+      decisionStatistics: [1, 2, 3].map((n) => ({
+        requests: 10 * n,
+        deadlineMisses: n,
+        busySkips: n + 1,
+        invalidPlans: 0,
+        lateReplies: n + 2,
+      })),
+    },
+    {
+      index: 2,
+      seed: 'summary:2',
+      swapped: true,
+      slotOrder: [1, 2, 0],
+      outcome: 'capped',
+      rounds: 2,
+      winnerId: null,
+      scores: [1, 1, 0],
+      kills: [7, 8, 9],
+      simulatedSeconds: 1,
+    },
+  ];
+  const summary = summarizeResults(results, rosterPlan);
+  assert.equal(summary.capped, 1);
+  assert.deepEqual(
+    summary.players?.map((p) => p.rates.win.count),
+    [1, 1, 0],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.rates.loss.count),
+    [1, 1, 2],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.roundWins),
+    [1, 2, 1],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.kills),
+    [15, 15, 15],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.decisionStatistics.requests),
+    [20, 30, 10],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.decisionStatistics.deadlineMisses),
+    [2, 3, 1],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.decisionStatistics.busySkips),
+    [3, 4, 2],
+  );
+  assert.deepEqual(
+    summary.players?.map((p) => p.decisionStatistics.invalidPlans),
+    [0, 0, 0],
+  );
 });
 
 test('browser speed defaults to 1x and can compare accelerated browser runs with a reference', () => {
@@ -279,4 +528,42 @@ test('comparison accepts legacy 1x references and rejects invalid speed metadata
   candidate.execution = 'browser-workers';
   candidate.browserSpeed = Infinity;
   assert.throws(() => compareReports(candidate, baseline), /Browser speed/);
+});
+
+test('free-for-all comparison checks every competitor even when the first bot always loses', () => {
+  const [candidate, baseline] = reports(1000);
+  for (const report of [candidate, baseline]) {
+    report.plan.bots = ['easy', 'medium', 'hard'];
+    report.plan.swapSides = false;
+    for (const result of report.results) {
+      result.swapped = false;
+      result.slotOrder = [0, 1, 2];
+      result.outcome = 'loss';
+      result.winnerId = 1;
+      result.scores = [0, 1, 0];
+      result.kills = [0, 1, 0];
+    }
+  }
+  assert.equal(compareReports(candidate, baseline).status, 'equivalent');
+  for (const result of baseline.results) result.winnerId = 2;
+  const comparison = compareReports(candidate, baseline);
+  assert.equal(comparison.status, 'different');
+  assert.ok(comparison.outcomes.every((outcome) => outcome.status === 'equivalent'));
+  assert.equal(comparison.players?.length, 3);
+  assert.ok(comparison.players?.[1].outcomes.some((outcome) => outcome.status === 'different'));
+  candidate.results[0].slotOrder = [2, 1, 0];
+  assert.throws(() => compareReports(candidate, baseline), /roster rotation/);
+  candidate.results[0].slotOrder = [0, 1, 2];
+  candidate.results[0].winnerId = 3;
+  assert.throws(() => compareReports(candidate, baseline), /per-player/);
+  candidate.results[0].winnerId = 0;
+  assert.throws(() => compareReports(candidate, baseline), /roster winner/);
+});
+
+test('comparison distinguishes endless matches from independent rounds while accepting legacy mode inference', () => {
+  const [candidate, baseline] = reports(10);
+  candidate.plan.mode = 'rounds';
+  assert.doesNotThrow(() => compareReports(candidate, baseline));
+  baseline.plan.mode = 'matches';
+  assert.throws(() => compareReports(candidate, baseline), /settings/);
 });

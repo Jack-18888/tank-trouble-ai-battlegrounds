@@ -137,12 +137,17 @@ Run bots directly in Node.js, as fast as the CPU permits, with optional compatib
 npm run simulate -- medium hard --rounds 1000 --seed benchmark --out .qa/results.json
 npm run simulate -- medium hard --matches 10 --target 3
 npm run simulate -- easy hard --rounds 1 --replays .qa/sample-replays
+npm run simulate -- easy medium hard easy medium hard --rounds 6 --out .qa/six-bots.json
+npm run simulate -- easy medium hard --matches 1 --target 0 --max-rounds 10
 ```
 
-Starting slots alternate, and win/tie/loss statistics describe the first named bot. The runner uses
-the shared 120 Hz scheduler and isolated Node worker threads. Deadline misses can differ between
-runs; inspect the report diagnostics alongside outcomes. An optional real-time
-browser reference collector compares rate differences against a default tolerance of 5 percentage
+All bot-only browser configurations are supported: 2–6 tanks (including repeated bot IDs), all map
+sizes/densities, optional pickups, win targets, and endless matches bounded by `--max-rounds`.
+Starting slots rotate across the full roster. Headline win/tie/loss statistics describe the first
+named entry, with scores, kills, outcome rates, and decision diagnostics also reported for each
+entry. The runner uses the shared game engine, 120 Hz scheduler, and isolated Node worker threads.
+Deadline misses can differ between runs; inspect the report diagnostics alongside outcomes. An
+optional real-time browser reference collector compares rate differences against a default tolerance of 5 percentage
 points, with confidence intervals and an explicit inconclusive result for insufficient evidence.
 See [headless simulations and browser comparison](docs/simulations.md) for options and validation.
 
