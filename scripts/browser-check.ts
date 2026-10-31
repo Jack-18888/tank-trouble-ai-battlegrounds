@@ -7,6 +7,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { recordedRound } from '../tests/helpers/replay.ts';
 import { serializeReplay } from '../src/replay.ts';
+import { collectTickTrace } from '../tests/helpers/tick-trace.ts';
+import { InProcessConnection } from '../src/players/in-process-connection.ts';
 interface BrowserTarget {
   type: string;
   webSocketDebuggerUrl: string;
@@ -618,6 +620,25 @@ try {
       'a thrown worker decision stops only its own tank',
     );
     await evaluate('window.__workerQA.dispose()');
+    const expectedTrace = await collectTickTrace(
+      (init, events) => new InProcessConnection(init, events),
+      64,
+    );
+    for (const batch of [1, 4, 64]) {
+      const browserTrace = await evaluate(`(async () => {
+        const { collectTickTrace } = await import('/tests/helpers/tick-trace.ts');
+        const { WorkerConnection } = await import('/src/players/worker-connection.ts');
+        return collectTickTrace((init, events) => {
+          const worker = new Worker('/tests/fixtures/bot.worker.ts', { type: 'module' });
+          return new WorkerConnection(init, events, {
+            listen(message, failure) { worker.onmessage = event => message(event.data); worker.onerror = event => failure(event.message); },
+            post(message) { worker.postMessage(message); },
+            terminate() { worker.terminate(); },
+          });
+        }, ${batch});
+      })()`);
+      assert.deepEqual(browserTrace, expectedTrace, `tick trace differs at batch ${batch}`);
+    }
     // A main-only registration is intentionally absent from the production worker catalog.
     // Its startup failure must stop one tank, show a notice, and leave the match running.
     await click('tank-plus');
@@ -769,6 +790,7 @@ try {
             ? [
                 'one-second bot computation does not block physics, drawing, human input, or another bot',
                 'importable asynchronous custom bot executes inside a worker',
+                'identical gameplay tick traces across local and browser workers at batch sizes 1/4/64',
                 'failed worker is marked offline while the match continues',
                 'opt-in round recording, download, and re-upload through the game UI',
                 'wall-edge firing regression',

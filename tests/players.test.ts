@@ -17,14 +17,31 @@ test('Player directly inherits AbstractPlayer and translates input without obser
   const observe = (): never => {
     throw new Error('Human input must not build a world snapshot');
   };
-  assert.deepEqual(player.decide({ input: {}, observe }), { steer: 0, throttle: 0, fire: false });
-  assert.deepEqual(player.decide({ input: { left: true, backward: true, fire: true }, observe }), {
-    steer: -1,
-    throttle: -1,
-    fire: true,
+  assert.deepEqual(player.decide({ tick: 0, tickRate: 120, input: {}, observe }), {
+    steer: 0,
+    throttle: 0,
+    fire: false,
   });
   assert.deepEqual(
-    player.decide({ input: { left: true, right: true, forward: true, backward: true }, observe }),
+    player.decide({
+      tick: 0,
+      tickRate: 120,
+      input: { left: true, backward: true, fire: true },
+      observe,
+    }),
+    {
+      steer: -1,
+      throttle: -1,
+      fire: true,
+    },
+  );
+  assert.deepEqual(
+    player.decide({
+      tick: 0,
+      tickRate: 120,
+      input: { left: true, right: true, forward: true, backward: true },
+      observe,
+    }),
     { steer: 0, throttle: 0, fire: false },
   );
 });

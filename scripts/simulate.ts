@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { runSimulation } from '../src/simulation.ts';
+import { runSimulation, SIMULATION_SCHEDULING } from '../src/simulation.ts';
+import { nodeBotConnection } from './node-bot-connection.ts';
 import type { SimulationReport } from '../src/simulation.ts';
 import { compareReports, summarizeResults } from '../src/simulation-statistics.ts';
 import { serializeReplay } from '../src/replay.ts';
@@ -21,7 +22,7 @@ try {
     ];
     for (const directory of ['src', 'scripts']) {
       for (const file of await readdir(directory, { recursive: true }))
-        if (file.endsWith('.ts')) files.push(path.join(directory, file));
+        if (file.endsWith('.ts') || file.endsWith('.mjs')) files.push(path.join(directory, file));
     }
     for (const file of files.sort())
       hash
@@ -31,8 +32,9 @@ try {
         .update('\0');
     const report: SimulationReport = {
       format: 'tank-trouble-simulation',
-      version: 1,
-      execution: options.browser ? 'browser-workers' : 'in-process',
+      version: 2,
+      execution: options.browser ? 'browser-workers' : 'node-workers',
+      scheduling: SIMULATION_SCHEDULING,
       environment: process.version,
       browserSpeed: options.browser ? options.browserSpeed : undefined,
       sourceHash: hash.digest('hex'),
@@ -71,7 +73,7 @@ try {
       const replayDir = options.replays ? path.resolve(options.replays) : undefined;
       if (replayDir) mkdirSync(replayDir, { recursive: true });
       for (let index = 0; index < options.plan.count; index++) {
-        const result = runSimulation(
+        const result = await runSimulation(
           options.plan,
           index,
           replayDir
@@ -82,10 +84,11 @@ try {
                 });
               }
             : undefined,
+          nodeBotConnection,
         );
         report.results.push(result);
         if ((index + 1) % 100 === 0)
-          console.error(`In-process sample ${index + 1}/${options.plan.count}`);
+          console.error(`Node-worker sample ${index + 1}/${options.plan.count}`);
       }
     }
     await save();
@@ -100,12 +103,18 @@ try {
       );
     }
     const simulated = report.results.reduce((sum, result) => sum + result.simulatedSeconds, 0);
+    const skipped = report.results
+      .flatMap((r) => r.decisionStatistics ?? [])
+      .reduce((n, s) => n + s.deadlineMisses + s.busySkips + s.invalidPlans, 0);
+    console.log(
+      `Skipped decisions: ${skipped} (10 ms budget; includes busy workers and invalid plans)`,
+    );
     console.log(
       `${(report.elapsedMs / 1000).toFixed(2)}s wall time; ${(simulated / (report.elapsedMs / 1000)).toFixed(1)}x simulated time`,
     );
     if (options.compare) {
       const reference = JSON.parse(await readFile(options.compare, 'utf8')) as SimulationReport;
-      if (reference.format !== report.format || reference.version !== report.version)
+      if (reference.format !== report.format || ![1, 2].includes(reference.version))
         throw new Error('Unsupported simulation report.');
       const comparison = compareReports(report, reference, options.tolerance);
       console.log(JSON.stringify(comparison, null, 2));

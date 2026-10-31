@@ -13,7 +13,7 @@ import type {
   WorkerRequest,
   WorldFrame,
 } from '../src/players/connection.ts';
-import type { PlayerContext, PlayerDecision } from '../src/players/types.ts';
+import type { Decision, PlayerContext, PlayerDecision } from '../src/players/types.ts';
 import { stampOf } from '../src/players/connection.ts';
 import { RULES } from '../src/rules.ts';
 import { serveBotWorker } from '../src/players/worker-host.ts';
@@ -21,6 +21,7 @@ import { serveBotWorker } from '../src/players/worker-host.ts';
 class Port implements WorkerPort {
   sent: WorkerRequest[] = [];
   terminated = 0;
+  sequence = 0;
   receive: (value: unknown) => void = () => {};
   fail: (reason: string) => void = () => {};
   listen(receive: (value: unknown) => void, fail: (reason: string) => void) {
@@ -35,7 +36,6 @@ class Port implements WorkerPort {
   }
   ready() {
     const message = this.sent[0];
-    assert.equal(message.type, 'init');
     if (message.type !== 'init') throw new Error('Expected initialization.');
     this.receive({
       type: 'ready',
@@ -49,20 +49,19 @@ class Port implements WorkerPort {
     if (message?.type !== 'observe') throw new Error('Expected observation.');
     return message.frame;
   }
-  result(sequence: number, decision?: PlayerDecision, frame = this.observation()) {
-    const reply: WorkerReply = {
-      type: 'result',
-      stamp: stampOf(frame),
-      sequence,
-      ...(decision ? { decision } : {}),
-    };
-    this.receive(reply);
+  result(decision: Decision, frame = this.observation()) {
+    this.receive({ type: 'result', stamp: stampOf(frame), sequence: ++this.sequence, decision });
   }
 }
-
-function setup() {
+function setup(t: test.TestContext, botsOnly = false) {
   const game = new Game(
-    { players: [{ kind: 'human' }, { kind: 'bot', botId: 'medium' }], powerups: false },
+    {
+      players: [
+        botsOnly ? { kind: 'bot', botId: 'medium' } : { kind: 'human' },
+        { kind: 'bot', botId: 'medium' },
+      ],
+      powerups: false,
+    },
     'connections',
   );
   let clock = 0;
@@ -77,7 +76,12 @@ function setup() {
     () => clock,
   );
   game.start();
+  game.state = 'playing';
+  game.map.walls = game.map.walls.filter((w) => w.border);
+  Object.assign(game.tanks[0], { x: 100, y: 100, angle: 0 });
+  Object.assign(game.tanks[1], { x: 500, y: 400, angle: 0 });
   runtime.sync();
+  t.after(() => runtime.dispose());
   return {
     game,
     runtime,
@@ -87,230 +91,210 @@ function setup() {
     },
   };
 }
+const plan = (ticks = 2, throttle = 1): Decision => ({ segments: [{ ticks, throttle }] });
 
-test('physics never constructs bots and runtime waits for readiness without blocking humans', () => {
-  const { game, runtime, ports } = setup();
-  assert.equal(ports.length, 1);
-  assert.equal(game.players.get(1)?.status, 'connecting');
-  assert.equal(game.players.get(1)?.profile, null);
-  game.state = 'playing';
-  game.map.walls = game.map.walls.filter((wall) => wall.border);
-  Object.assign(game.tanks[0], { x: 100, y: 100, angle: 0 });
-  Object.assign(game.tanks[1], { x: 500, y: 400, angle: 0 });
+test('readiness gates the countdown/physics; human controls use the shared executor', (t) => {
+  const { game, runtime, ports } = setup(t);
   runtime.setInput({ forward: true });
-  assert.equal(game.tanks[0].throttle, 0);
-  runtime.step(1 / 120);
-  assert.ok(game.tanks[0].x > 100);
-  assert.equal(game.tanks[1].x, 500);
+  assert.equal(runtime.step(), false);
+  assert.equal(game.tick, 0);
+  ports[0].ready();
+  assert.equal(runtime.step(), false);
+  assert.equal(ports[0].observation().tick, 0);
+  ports[0].result(plan());
+  assert.equal(runtime.step(), true);
   assert.equal(game.tick, 1);
-  ports[0].ready();
-  assert.equal(game.players.get(1)?.status, 'ready');
-  runtime.dispose();
+  assert.ok(game.tanks[0].x > 100);
+  assert.ok(game.tanks[1].x > 500);
+  runtime.setInput({});
+  runtime.step();
+  assert.equal(game.tanks[0].throttle, 0);
 });
 
-test('commands apply on the next tick, remain active, and reject stale or future envelopes', () => {
-  const { game, runtime, ports } = setup();
-  ports[0].ready();
-  game.state = 'playing';
-  runtime.step(1 / 120);
-  const frame = ports[0].observation();
-  ports[0].result(1, { steer: 99, throttle: 0.5, fire: true });
-  assert.equal(game.tanks[1].steer, 0);
-  runtime.step(1 / 120);
-  assert.equal(game.tanks[1].steer, 1);
-  assert.equal(game.tanks[1].throttle, 0.5);
-  runtime.step(1 / 120);
-  assert.equal(game.tanks[1].throttle, 0.5);
-  assert.equal(game.submitDecision(1, { ...stampOf(frame), sequence: 1, decision: {} }), false);
-  assert.equal(
-    game.submitDecision(1, {
-      ...game.controlStamp(),
-      tick: game.tick + 1,
-      sequence: 2,
-      decision: {},
-    }),
-    false,
+test('plans run for exact ticks, then request one shared completed-state observation', (t) => {
+  const { game, runtime, ports } = setup(t, true);
+  ports.forEach((p) => p.ready());
+  assert.equal(runtime.step(), false);
+  assert.deepEqual(
+    ports.map((p) => p.observation().tick),
+    [0, 0],
   );
-  assert.equal(
-    game.submitDecision(1, {
-      ...game.controlStamp(),
-      generation: game.generation - 1,
-      sequence: 2,
-      decision: {},
-    }),
-    false,
+  ports[1].result(plan());
+  assert.equal(runtime.step(), false, 'one reply cannot advance the world');
+  ports[0].result(plan());
+  assert.equal(runtime.step(), true);
+  assert.equal(runtime.step(), true);
+  assert.equal(game.tick, 2);
+  assert.equal(runtime.step(), false);
+  assert.deepEqual(
+    ports.map((p) => p.observation().tick),
+    [2, 2],
   );
-  runtime.dispose();
+  assert.equal(ports[0].sent.filter((m) => m.type === 'init').length, 1);
 });
 
-test('busy workers receive only the newest pending snapshot and static map is sent once', () => {
-  const { game, runtime, ports } = setup();
+test('reply arrival order does not change gameplay', (t) => {
+  const run = (reverse: boolean) => {
+    const { game, runtime, ports } = setup(t, true);
+    ports.forEach((p) => p.ready());
+    for (let tick = 0; tick < 20; tick += 2) {
+      runtime.step();
+      for (const id of reverse ? [1, 0] : [0, 1])
+        ports[id].result({ segments: [{ ticks: 2, throttle: 0.3, steer: id ? -0.2 : 0.2 }] });
+      runtime.step();
+      runtime.step();
+    }
+    return game.snapshot();
+  };
+  assert.deepEqual(run(false), run(true));
+});
+
+test('receipt before 10ms is accepted; at or after 10ms becomes four neutral ticks', (t) => {
+  for (const duration of [9.999, 10, 11]) {
+    const { game, runtime, ports, setClock } = setup(t);
+    ports[0].ready();
+    runtime.step();
+    setClock(duration);
+    ports[0].result(plan());
+    assert.equal(runtime.step(), true);
+    assert.equal(game.tanks[1].throttle, duration < 10 ? 1 : 0);
+    assert.equal(runtime.statistics.get(1)?.deadlineMisses, duration < 10 ? 0 : 1);
+  }
+});
+
+test('busy workers get neutral retry plans without overlapping or queued requests', (t) => {
+  const { game, runtime, ports, setClock } = setup(t);
   const port = ports[0];
   port.ready();
-  game.state = 'playing';
-  for (let i = 0; i < 13; i++) runtime.step(1 / 120);
-  assert.equal(port.sent.filter((message) => message.type === 'observe').length, 1);
-  const first = port.observation();
-  port.result(0);
-  assert.equal(port.sent.filter((message) => message.type === 'observe').length, 2);
-  assert.ok(port.observation().tick >= 12);
-  assert.ok(port.observation().tick > first.tick);
-  assert.equal('map' in port.observation(), false);
-  assert.equal(port.sent.filter((message) => message.type === 'init').length, 1);
-  runtime.dispose();
-});
-
-test('pause clears controls, rejects old work, and resumes with fresh observations in the same worker', () => {
-  const { game, runtime, ports } = setup();
-  const port = ports[0];
-  port.ready();
-  game.state = 'playing';
-  runtime.step(1 / 120);
+  runtime.step();
   const old = port.observation();
-  runtime.setInput({ fire: true });
-  runtime.step(1 / 120);
-  assert.equal(game.tanks[0].fire, true);
-  game.pause();
-  runtime.sync();
-  assert.equal(game.tanks[0].fire, false);
-  const count = port.sent.length;
-  for (let i = 0; i < 10; i++) runtime.step(1 / 120);
-  assert.equal(port.sent.length, count);
-  game.pause();
-  runtime.sync();
-  runtime.step(1 / 120);
-  port.result(1, { throttle: 1, fire: true }, old);
-  assert.equal(game.tanks[1].fire, false);
-  const fresh = port.observation();
-  assert.notEqual(fresh.epoch, old.epoch);
-  port.result(2, { throttle: 1 }, fresh);
-  runtime.step(1 / 120);
+  setClock(10);
+  assert.equal(runtime.step(), true);
+  for (let i = 0; i < 3; i++) runtime.step();
+  assert.equal(game.tick, 4);
+  runtime.step();
+  assert.equal(port.sent.length, 2, 'no second observation while the worker is busy');
+  assert.equal(runtime.statistics.get(1)?.busySkips, 1);
+  port.result(plan(), old);
+  assert.equal(game.tanks[1].throttle, 0, 'late plan is discarded');
+  for (let i = 0; i < 3; i++) runtime.step();
+  assert.equal(game.tick, 8);
+  assert.equal(runtime.step(), false);
+  port.result(plan());
+  runtime.step();
   assert.equal(game.tanks[1].throttle, 1);
-  assert.equal(ports.length, 1);
-  runtime.dispose();
 });
 
-test('round changes, elimination, and disposal terminate workers and discard their late replies', () => {
-  const { game, runtime, ports } = setup();
+test('invalid plans are rejected atomically and retried without failing the controller', (t) => {
+  const { game, runtime, ports } = setup(t);
+  ports[0].ready();
+  runtime.step();
+  ports[0].result({
+    segments: [
+      { ticks: 1, throttle: 1 },
+      { ticks: 0, fire: 'held' },
+    ],
+  });
+  runtime.step();
+  assert.equal(game.tanks[1].throttle, 0);
+  assert.equal(game.players.get(1)?.status, 'ready');
+  assert.equal(runtime.statistics.get(1)?.invalidPlans, 1);
+  for (let i = 0; i < 3; i++) runtime.step();
+  assert.equal(runtime.step(), false);
+  assert.equal(ports[0].observation().tick, 4);
+});
+
+test('pause preserves plans and buffers outstanding outcomes until resume', (t) => {
+  const { game, runtime, ports } = setup(t);
+  ports[0].ready();
+  runtime.step();
+  game.pause();
+  runtime.sync();
+  ports[0].result(plan(3));
+  assert.equal(runtime.step(), false);
+  assert.equal(game.tick, 0);
+  assert.equal(game.tanks[1].throttle, 0);
+  game.pause();
+  runtime.step();
+  assert.equal(game.tanks[1].throttle, 1);
+  game.pause();
+  runtime.sync();
+  for (let i = 0; i < 5; i++) runtime.step();
+  game.pause();
+  runtime.step();
+  runtime.step();
+  assert.equal(game.tick, 3);
+  assert.equal(ports[0].sent.length, 2);
+  assert.equal(runtime.step(), false);
+  assert.equal(ports[0].observation().tick, 3);
+});
+
+test('round replacement, elimination, and disposal reject obsolete callbacks', async (t) => {
+  const { game, runtime, ports } = setup(t);
   const old = ports[0];
   old.ready();
-  game.state = 'playing';
-  runtime.step(1 / 120);
-  const frame = old.observation();
-  game.finishRound(game.tanks[0]);
+  runtime.step();
+  const cancelled = runtime.whenUnblocked();
+  game.prepareRound('replacement');
   runtime.sync();
-  assert.equal(old.terminated, 1);
-  game.timer = 0;
-  runtime.step(1 / 120);
+  await cancelled;
+  old.result(plan());
   assert.equal(ports.length, 2);
-  assert.equal(game.round, 2);
-  old.result(100, { fire: true }, frame);
-  assert.equal(game.tanks[1].fire, false);
+  assert.equal(old.terminated, 1);
+  assert.equal(game.players.get(1)?.status, 'connecting');
   ports[1].ready();
-  game.destroyTank(game.tanks[1], 0);
-  runtime.sync();
-  assert.equal(ports[1].terminated, 1);
+  runtime.step();
+  const waiting = runtime.whenUnblocked();
   runtime.dispose();
-  runtime.dispose();
+  await waiting;
   assert.equal(ports[1].terminated, 1);
+  assert.equal(runtime.step(), false);
 });
 
-test('worker errors stop only that tank and produce one failure event', () => {
-  const { game, runtime, ports } = setup();
-  ports[0].ready();
-  game.state = 'playing';
-  runtime.step(1 / 120);
-  ports[0].result(1, { fire: true, throttle: 1 });
-  runtime.step(1 / 120);
-  ports[0].fail('Fixture crash');
-  ports[0].fail('Duplicate error');
-  assert.equal(game.players.get(1)?.status, 'failed');
-  assert.equal(game.tanks[1].fire, false);
-  assert.equal(game.tanks[1].throttle, 0);
-  assert.equal(game.tanks[1].alive, true);
-  const elapsed = game.elapsed;
-  runtime.step(1 / 120);
-  assert.ok(game.elapsed > elapsed);
-  assert.equal(
-    game.drainEvents().filter((event) => event.type === 'playerStatus' && event.status === 'failed')
-      .length,
-    1,
-  );
-  assert.equal(ports[0].terminated, 1);
-});
-
-test('startup and outstanding work time out after ten unpaused seconds', () => {
+test('startup and stuck-operation watchdogs exclude paused wall time', (t) => {
   for (const ready of [false, true]) {
-    const { game, runtime, ports, setClock } = setup();
+    const { game, runtime, ports, setClock } = setup(t);
     if (ready) {
       ports[0].ready();
-      game.state = 'playing';
-      runtime.step(1 / 120);
+      runtime.step();
     }
     setClock(5000);
-    runtime.step(1 / 120);
+    runtime.step();
     assert.notEqual(game.players.get(1)?.status, 'failed');
     game.pause();
     runtime.sync();
     setClock(100000);
-    runtime.step(1 / 120);
+    runtime.step();
     assert.notEqual(game.players.get(1)?.status, 'failed');
     game.pause();
     runtime.sync();
     setClock(105001);
-    runtime.step(1 / 120);
+    runtime.step();
     assert.equal(game.players.get(1)?.status, 'failed');
     assert.equal(ports[0].terminated, 1);
-    runtime.dispose();
   }
 });
 
-test('malformed replies and invalid readiness profiles fail the connection', () => {
-  for (const payload of [
-    { type: 'unexpected' },
-    { type: 'ready', generation: 1, round: 1, profile: { speed: NaN } },
-  ]) {
-    const { game, runtime, ports } = setup();
-    ports[0].receive(payload);
+test('malformed replies and worker errors fail only their own controller', (t) => {
+  for (const malformed of [true, false]) {
+    const { game, runtime, ports } = setup(t);
+    if (malformed) ports[0].receive({ type: 'unexpected' });
+    else ports[0].fail('Expected crash');
     assert.equal(game.players.get(1)?.status, 'failed');
-    runtime.dispose();
+    runtime.setInput({ forward: true });
+    assert.equal(runtime.step(), true);
+    assert.ok(game.tanks[0].x > 100);
+    ports[0].fail('Repeated error');
+    assert.equal(ports[0].terminated, 1);
   }
 });
 
-test('worker observations are shared completed-tick snapshots detached from live tanks', () => {
-  const game = new Game(
-    {
-      players: [
-        { kind: 'bot', botId: 'medium' },
-        { kind: 'bot', botId: 'hard' },
-      ],
-    },
-    'snapshots',
-  );
-  const seen: WorldFrame[] = [];
-  const runtime = new PlayerRuntime(game, (_init, events) => {
-    events.ready(new MediumBot().profile);
-    return { observe: (frame) => seen.push(frame), invalidate() {}, advance() {}, dispose() {} };
-  });
-  game.state = 'playing';
-  runtime.step(1 / 120);
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0], seen[1]);
-  assert.equal(seen[0].tick, game.tick);
-  assert.ok(Object.isFrozen(seen[0].tanks[0]));
-  const x = seen[0].tanks[0].x;
-  game.tanks[0].x += 10;
-  assert.equal(seen[0].tanks[0].x, x);
-  runtime.dispose();
-});
-
-test('each bot has an independent random stream that never advances physics randomness', () => {
+test('each bot RNG is independent and contexts expose universal ticks', () => {
   class RandomBot extends AbstractPlayer {
-    constructor() {
-      super({ reaction: 0 });
-    }
-    override decide({ observe }: PlayerContext): PlayerDecision {
-      return { steer: observe().random() };
+    override decide(context: PlayerContext): PlayerDecision {
+      assert.equal(context.tickRate, 120);
+      assert.equal(context.tick, 17);
+      return { steer: context.observe().random() };
     }
   }
   const game = new Game({}, 'random-streams');
@@ -326,60 +310,119 @@ test('each bot has an independent random stream that never advances physics rand
   };
   const first = new BotBrain(init, () => new RandomBot());
   const same = new BotBrain(init, () => new RandomBot());
-  const other = new BotBrain({ ...init, playerId: 0, seed: 'bot-two' }, () => new RandomBot());
+  const other = new BotBrain({ ...init, seed: 'other' }, () => new RandomBot());
+  const frame = { ...game.snapshot(), tick: 17 };
   for (let i = 0; i < 10; i++) {
-    const frame = { ...game.snapshot(), tick: i };
-    for (let n = 0; n < 20; n++) other.decide(frame);
+    other.decide(frame);
     assert.deepEqual(first.decide(frame), same.decide(frame));
   }
   assert.equal(game.rng(), baseline.rng());
 });
 
-test('late startup and error callbacks cannot mark a replacement round ready or failed', () => {
-  const { game, runtime, ports } = setup();
-  const old = ports[0];
-  game.prepareRound('replacement');
-  old.ready();
-  assert.equal(game.players.get(1)?.status, 'connecting');
-  old.fail('Late old-round error');
-  assert.equal(game.players.get(1)?.status, 'connecting');
-  runtime.sync();
-  assert.equal(ports.length, 2);
-  ports[1].ready();
-  assert.equal(game.players.get(1)?.status, 'ready');
-  runtime.dispose();
-});
-
-test('the real worker host reports a rejected asynchronous decision as a controller failure', async () => {
+test('worker host preserves native plans and reports rejected async strategies', async () => {
+  class PlanBot extends AbstractPlayer {
+    override async decide(): Promise<Decision> {
+      return plan(7);
+    }
+  }
   class RejectingBot extends AbstractPlayer {
-    override async decide(): Promise<PlayerDecision> {
+    override async decide(): Promise<Decision> {
       throw new Error('Expected async failure');
     }
   }
-  let receive: (message: WorkerRequest) => void = () => {};
-  const replies: WorkerReply[] = [];
-  serveBotWorker(
-    (handler) => {
-      receive = handler;
-    },
-    (reply) => replies.push(reply),
-    () => new RejectingBot(),
-  );
-  const game = new Game({}, 'worker-host');
-  receive({
-    type: 'init',
-    init: {
-      generation: game.generation,
-      round: game.round,
-      playerId: 1,
-      botId: 'reject',
-      seed: 'seed',
-      map: game.map,
-      rules: RULES,
-    },
+  for (const failing of [false, true]) {
+    let receive: (message: WorkerRequest) => void = () => {};
+    const replies: WorkerReply[] = [];
+    serveBotWorker(
+      (handler) => {
+        receive = handler;
+      },
+      (reply) => replies.push(reply),
+      () => (failing ? new RejectingBot() : new PlanBot()),
+    );
+    const game = new Game({}, 'host');
+    receive({
+      type: 'init',
+      init: {
+        generation: game.generation,
+        round: game.round,
+        playerId: 1,
+        botId: 'fixture',
+        seed: 'host',
+        map: game.map,
+        rules: RULES,
+      },
+    });
+    receive({ type: 'observe', frame: game.snapshot() });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (failing)
+      assert.deepEqual(replies[1], { type: 'failure', reason: 'Expected async failure' });
+    else {
+      const reply = replies[1];
+      assert.equal(reply.type, 'result');
+      if (reply.type === 'result') assert.deepEqual(reply.decision, plan(7));
+    }
+  }
+});
+
+test('null or missing decision payloads produce neutral retries instead of OFFLINE', (t) => {
+  for (const missing of [false, true]) {
+    const { game, runtime, ports } = setup(t);
+    ports[0].ready();
+    runtime.step();
+    ports[0].receive({
+      type: 'result',
+      stamp: stampOf(ports[0].observation()),
+      sequence: 1,
+      ...(missing ? {} : { decision: null }),
+    });
+    assert.equal(runtime.step(), true);
+    assert.equal(game.players.get(1)?.status, 'ready');
+    assert.equal(game.tanks[1].throttle, 0);
+    assert.equal(runtime.statistics.get(1)?.invalidPlans, 1);
+  }
+});
+
+test('elimination cancels an outstanding boundary and discards its reply', async (t) => {
+  const { game, runtime, ports } = setup(t);
+  ports[0].ready();
+  runtime.step();
+  const waiting = runtime.whenUnblocked();
+  game.destroyTank(game.tanks[1], 0);
+  runtime.sync();
+  await waiting;
+  assert.equal(ports[0].terminated, 1);
+  ports[0].result(plan());
+  assert.equal(game.players.get(1)?.status, 'closed');
+  assert.equal(game.tanks[1].throttle, 0);
+});
+
+test('async waiters remain suspended during pause until resume', async (t) => {
+  const { game, runtime, ports } = setup(t);
+  ports[0].ready();
+  runtime.step();
+  let resolved = false;
+  const waiting = runtime.whenUnblocked().then(() => {
+    resolved = true;
   });
-  assert.equal(replies[0].type, 'ready');
-  receive({ type: 'observe', frame: game.snapshot() });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(replies[1], { type: 'failure', reason: 'Expected async failure' });
+  game.pause();
+  runtime.sync();
+  ports[0].result(plan());
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  game.pause();
+  runtime.sync();
+  await waiting;
+  assert.equal(game.tick, 0);
+  assert.equal(runtime.step(), true);
+});
+
+test('mismatched observation stamps cannot submit plans', (t) => {
+  const { game, runtime, ports } = setup(t);
+  ports[0].ready();
+  runtime.step();
+  const frame = ports[0].observation();
+  ports[0].result(plan(), { ...frame, tick: frame.tick + 1 });
+  assert.equal(game.players.get(1)?.status, 'failed');
+  assert.equal(game.tanks[1].throttle, 0);
 });

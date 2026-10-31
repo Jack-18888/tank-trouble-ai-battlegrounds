@@ -8,11 +8,15 @@ import type { GameConfig, PlayerInput, Seed } from '../../src/types.ts';
 export function createTestGame(config: Partial<GameConfig> = {}, seed?: Seed) {
   const game = new Game(config, seed);
   const controllers = new Map<number, AbstractPlayer>();
-  const runtime = new PlayerRuntime(game, (init, events) => {
-    const connection = new InProcessConnection(init, events);
-    controllers.set(init.playerId, connection.brain.player);
-    return connection;
-  });
+  const runtime = new PlayerRuntime(
+    game,
+    (init, events) => {
+      const connection = new InProcessConnection(init, events);
+      controllers.set(init.playerId, connection.brain.player);
+      return connection;
+    },
+    () => 0,
+  );
   return Object.assign(game, {
     runtime,
     controllers,

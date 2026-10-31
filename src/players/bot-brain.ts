@@ -1,17 +1,15 @@
 import { createBot } from '../bots/index.ts';
 import { randomGenerator } from '../random.ts';
 import { observeWorld } from './observation.ts';
+import { MAX_DECISION_TICKS, RETRY_TICKS, TICK_RATE } from './decision.ts';
 import type { AbstractPlayer } from './abstract-player.ts';
 import type { RoundInit, WorldFrame } from './connection.ts';
-import type { PlayerDecision } from './types.ts';
+import type { Decision, PlayerDecision } from './types.ts';
 
-/** Runs inside a worker; the explicit in-process test connection uses the same scheduler. */
+/** Strategy instance and private RNG; the coordinator owns all decision deadlines. */
 export class BotBrain {
   readonly player: AbstractPlayer;
   private readonly random: () => number;
-  private nextThink = 0;
-  private epoch = -1;
-
   constructor(
     private readonly init: RoundInit,
     factory: (id: string) => AbstractPlayer = createBot,
@@ -19,30 +17,35 @@ export class BotBrain {
     this.player = factory(init.botId);
     this.random = randomGenerator(init.seed);
   }
-
-  /** Return no decision until due, or calculate once using this frame and the bot's private RNG. */
-  decide(frame: WorldFrame): PlayerDecision | undefined | Promise<PlayerDecision | undefined> {
-    if (this.epoch !== frame.epoch) {
-      // Resume starts with a fresh observation instead of waiting on a pre-pause deadline.
-      this.epoch = frame.epoch;
-      this.nextThink = frame.match.elapsed;
-    }
-    if (frame.match.elapsed + 1e-9 < this.nextThink) return;
+  decide(frame: WorldFrame): Decision | Promise<Decision> {
     let snapshot: ReturnType<typeof observeWorld> | undefined;
     const result = this.player.decide(
       Object.freeze({
+        tick: frame.tick,
+        tickRate: TICK_RATE,
         input: Object.freeze({}),
         observe: () => (snapshot ??= observeWorld(this.init, frame, this.random)),
       }),
     );
-    const complete = (decision: PlayerDecision): PlayerDecision => {
-      if (!decision || typeof decision !== 'object')
-        throw new TypeError('Expected a movement decision object.');
+    const complete = (value: Decision | PlayerDecision): Decision => {
+      // Invalid native plans reach coordinator validation instead of failing the controller.
+      if (!value || typeof value !== 'object' || 'segments' in value) return value as Decision;
       const reaction = this.player.profile.reaction;
-      // Schedule from simulation time, not Promise completion time; newer frames skip missed work.
-      this.nextThink =
-        frame.match.elapsed + (reaction ? reaction * (0.85 + this.random() * 0.3) : 0);
-      return decision;
+      const interval = reaction ? reaction * (0.85 + this.random() * 0.3) : 0;
+      const ticks = Math.min(
+        MAX_DECISION_TICKS,
+        Math.max(RETRY_TICKS, Math.ceil(interval * 30 - 1e-9) * RETRY_TICKS),
+      );
+      return {
+        segments: [
+          {
+            ticks,
+            steer: value.steer,
+            throttle: value.throttle,
+            ...(value.fire === true ? { fire: 'held' as const } : {}),
+          },
+        ],
+      };
     };
     return result instanceof Promise ? result.then(complete) : complete(result);
   }

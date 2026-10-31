@@ -23,6 +23,8 @@ limits enforced by the engine: the validator accepts any finite positive speed, 
 and any finite nonnegative reaction and error. A bot with higher speed or lower cooldown may win
 because of its stats. Disclose the entire profile, and distinguish that from better decisions.
 Use `this.profile.speed` for your movement model; `context.rules.playerSpeed` is the human's speed.
+Native `Decision` plans choose their own tick horizon; `profile.reaction` only supplies timing for
+legacy controls. State the plan horizons too when comparing native and legacy strategies.
 
 A round normally rewards the last surviving tank. When at most one tank remains or the 90-second
 limit is reached, physics continues through a 0.65-second settling period, so remaining shells matter.
@@ -80,28 +82,33 @@ bot files if changing shared helpers would also change opponents. Scope ordinary
 controller, registration, and relevant tests; request shared-engine changes only when the task
 actually calls for them.
 
+This starting point returns legacy `PlayerDecision` controls, which the runtime converts into one
+finite segment using the profile's seeded reaction interval. A new planner can instead return
+`Decision` with ordered `segments` and use `PlayerContext.tick` and `tickRate`. See the
+[native Decision example and bounds](bots.md#tick-based-decisions) before choosing plan lengths.
+
 ## Mechanics that change strategy decisions
 
 Use source as the authority if these details change.
 
-| Mechanic                                                                                                              | Consequence for the planner                                                                                                                                                                   |
-| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Positions are world pixels; angles are radians, clockwise from right. Cells are 64 pixels.                            | Convert cell indices to centers with `(cell.x + 0.5) * context.rules.cellSize`, and likewise for y. Cell walls are north/east/south/west.                                                     |
-| One hull heading controls both driving and firing.                                                                    | There is no independent turret or strafe control. Reverse can create space without turning away from a shot.                                                                                  |
-| `steer` and `throttle` are continuous in [-1, 1]; `fire` is boolean.                                                  | Controls are held until replaced. Returning `{}` releases all controls; it does not preserve earlier fields.                                                                                  |
-| Physics is 120 Hz; observations are 30 Hz. Positive reaction has ±15% scheduling variation.                           | Plan for the time controls remain active. `reaction: 0` allows decisions on available observations, not on every physics tick. `CombatStrategy` assumes positive reaction.                    |
-| A worker has one operation in flight and one replaceable pending observation.                                         | Slow searches skip intermediate observations while old controls stay active. A ten-second unpaused reply timeout marks the controller OFFLINE. Aim for much shorter computation.              |
-| Observations are detached and deeply frozen, including query state.                                                   | Copy data for rollouts; retained observations never become fresh. Use instance fields for memory, which resets each round but survives pause/resume.                                          |
-| The observation exposes the whole maze, living enemies, all tanks, shells, and pickups.                               | There is no visibility-based fog of war. `lineOfSight` describes wall clearance, not permission to know an enemy's position. Enemy movement profiles are not included.                        |
-| Shells move at 140 pixels/second, live 7.5 seconds, and ricochet.                                                     | Use observed velocities and remaining life when predicting hazards. The nominal path budget is 1,050 pixels; walls and tanks can end it sooner.                                               |
-| A shell ignores its owner until its first bounce, then can hit it.                                                    | Treat returning friendly shells as hazards. New firing lanes can become future traps.                                                                                                         |
-| Tanks collide using rotated tracks, hull, and barrel; walls have rounded ends.                                        | A center ray or circular tank approximation alone cannot establish movement clearance. Tank-to-tank contact also blocks routes.                                                               |
-| Firing starts beyond the muzzle; blocked muzzle clearance prevents a volley.                                          | `lineOfSight(self, enemy)` alone is not a reliable firing test.                                                                                                                               |
-| `predictShot(angle, bounces)` traces against frozen tank poses.                                                       | It returns the first tank hit, possibly yourself, and total path distance. It does not extrapolate movement, model random firing error, trace all scatter shells, or assess shield lethality. |
-| Each round starts with ten reserve bullets, capped at ten.                                                            | Shells in flight do not cap firing, disappearances do not refund ammo, and empty reserves can waste a good firing window.                                                                     |
-| Refill intervals are 2/1.5/1/0.5 seconds starting at 0/20/40/60 seconds; ammo is unlimited from 70 seconds.           | Adapt aggression to `match.elapsed`, reserve, and refill progress. Unlimited ammo does not remove cooldown.                                                                                   |
-| `shield` absorbs one shell. `rapid` gives a 0.13-second cooldown; `scatter` fires at offsets -0.17, 0, +0.17 radians. | A predicted hit need not kill. Offensive power lasts seven seconds; shield is a boolean, not that timer. Each scatter shell costs a bullet; a low-ammo volley can be partial.                 |
-| The provided RNG belongs to this bot; firing error is applied by the engine.                                          | Use `context.random()` for strategy randomness. Querying a shot at a precise angle does not remove profile firing error.                                                                      |
+| Mechanic                                                                                                               | Consequence for the planner                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Positions are world pixels; angles are radians, clockwise from right. Cells are 64 pixels.                             | Convert cell indices to centers with `(cell.x + 0.5) * context.rules.cellSize`, and likewise for y. Cell walls are north/east/south/west.                                                     |
+| One hull heading controls both driving and firing.                                                                     | There is no independent turret or strafe control. Reverse can create space without turning away from a shot.                                                                                  |
+| `steer` and `throttle` are continuous in [-1, 1]. Native segment firing is `once` or `held`; legacy firing is boolean. | Segments execute for exact tick durations. Legacy controls hold for their adapted interval; returning `{}` releases them. A blocked `once` volley is not retried later in the segment.        |
+| Physics is 120 Hz; native Decisions specify their segment durations in ticks.                                          | Observations arrive at plan expiry. Legacy controls retain seeded reaction variation and four-tick quantization; CombatStrategy assumes positive reaction.                                    |
+| Each worker has one request in flight and a 10 ms decision deadline, with no pending observation queue.                | Missed deadlines produce four neutral ticks. Late plans are discarded; the separate ten-second unpaused watchdog marks stuck workers OFFLINE.                                                 |
+| Observations are detached and deeply frozen, including query state.                                                    | Copy data for rollouts; retained observations never become fresh. Use instance fields for memory, which resets each round but survives pause/resume.                                          |
+| The observation exposes the whole maze, living enemies, all tanks, shells, and pickups.                                | There is no visibility-based fog of war. `lineOfSight` describes wall clearance, not permission to know an enemy's position. Enemy movement profiles are not included.                        |
+| Shells move at 140 pixels/second, live 7.5 seconds, and ricochet.                                                      | Use observed velocities and remaining life when predicting hazards. The nominal path budget is 1,050 pixels; walls and tanks can end it sooner.                                               |
+| A shell ignores its owner until its first bounce, then can hit it.                                                     | Treat returning friendly shells as hazards. New firing lanes can become future traps.                                                                                                         |
+| Tanks collide using rotated tracks, hull, and barrel; walls have rounded ends.                                         | A center ray or circular tank approximation alone cannot establish movement clearance. Tank-to-tank contact also blocks routes.                                                               |
+| Firing starts beyond the muzzle; blocked muzzle clearance prevents a volley.                                           | `lineOfSight(self, enemy)` alone is not a reliable firing test.                                                                                                                               |
+| `predictShot(angle, bounces)` traces against frozen tank poses.                                                        | It returns the first tank hit, possibly yourself, and total path distance. It does not extrapolate movement, model random firing error, trace all scatter shells, or assess shield lethality. |
+| Each round starts with ten reserve bullets, capped at ten.                                                             | Shells in flight do not cap firing, disappearances do not refund ammo, and empty reserves can waste a good firing window.                                                                     |
+| Refill intervals are 2/1.5/1/0.5 seconds starting at 0/20/40/60 seconds; ammo is unlimited from 70 seconds.            | Adapt aggression to `match.elapsed`, reserve, and refill progress. Unlimited ammo does not remove cooldown.                                                                                   |
+| `shield` absorbs one shell. `rapid` gives a 0.13-second cooldown; `scatter` fires at offsets -0.17, 0, +0.17 radians.  | A predicted hit need not kill. Offensive power lasts seven seconds; shield is a boolean, not that timer. Each scatter shell costs a bullet; a low-ammo volley can be partial.                 |
+| The provided RNG belongs to this bot; firing error is applied by the engine.                                           | Use `context.random()` for strategy randomness. Querying a shot at a precise angle does not remove profile firing error.                                                                      |
 
 ## Strategy directions worth testing
 
@@ -218,18 +225,19 @@ The runner alternates slots by default; even counts balance them exactly. Result
 **first named bot**, while raw `winnerId`, `scores`, and `kills` use roster order; check `swapped`.
 Retain outcome counts and 95% confidence intervals, not just win percentages. Match caps are
 excluded from outcome rates, so disclose the capped count. A controller error aborts evaluation;
-it is not an ordinary loss. The fast runner requires synchronous decisions and seeded strategy
-randomness. Use browser execution for asynchronous controllers.
+it is not an ordinary loss. Node and browser workers both support asynchronous decisions. Use seeded strategy randomness and inspect deadline-miss diagnostics.
+Report v2 records the shared scheduling settings and per-player requests, deadline misses, busy
+skips, invalid plans, and late replies. Do not double-count late replies as additional missed plans.
 
 `--compare` has a narrower purpose: comparing execution modes using the **same bots, source
 fingerprint, and full plan**. It cannot compare v1 source against v2, or two different bot pairings.
+Scheduling metadata must also match; legacy reports cannot serve as references for the new scheduler.
 Preserve each version's reports and profile for strength comparisons; do not edit fingerprints or
 misuse the execution-equivalence result as a ranking test.
 
 ### Browser timing matters
 
-Headless batches run synchronously in process. Actual browser bots run independently in workers;
-reply latency can change outcomes. Large-sample headless/browser agreement has not been established
+Headless and browser matches share the tick scheduler and isolate bots in workers. Hard wall-clock deadlines can skip different plans between runs, so reply latency can still change outcomes. Large-sample headless/browser agreement has not been established
 for arbitrary competitors. A runnable worker or an accurate replay does not prove that agreement.
 
 After the source is final, start `npm run dev` in another terminal. A small browser run checks the
@@ -243,10 +251,10 @@ npm run simulate -- contender hard --rounds 4 --seed contender-timing --compare 
 
 Four rounds are a smoke test; expect wide intervals and possibly an `inconclusive` result. Plan a
 larger matched sample when equivalence matters. A 1x browser report is the reference for normal
-play. `--browser-speed 4` accelerates simulation but changes worker scheduling and needs its own
+play. `--browser-speed 4` accelerates simulation but can change deadline misses and needs its own
 comparison with 1x. The CLI's equivalence tolerance defaults to five percentage points per outcome;
 `equivalent`, `different`, and `inconclusive` exit with 0, 1, and 2 respectively. See
-[the full procedure](simulations.md#comparing-against-browser-matches).
+[the full procedure](simulations.md#browser-verification-and-comparison).
 
 ## Verify and submit the result
 

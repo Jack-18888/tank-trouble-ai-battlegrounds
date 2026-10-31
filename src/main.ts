@@ -738,7 +738,7 @@ function handleEvents(events: readonly GameEvent[]) {
 }
 function frame(time: number) {
   // RAF timestamps are milliseconds. Limit catch-up after stalls, then simulate fixed 120 Hz ticks
-  // independently of rendering; PlayerRuntime publishes observations on its own 30 Hz cadence.
+  // independently of rendering; PlayerRuntime requests plans at their expiry boundaries.
   const elapsed = Math.min((time - (previousTime || time)) / 1000, 0.1);
   previousTime = time;
   if (playback) {
@@ -751,11 +751,15 @@ function frame(time: number) {
   }
   accumulator += elapsed;
   while (accumulator >= 1 / 120) {
-    runtime.step(1 / 120);
+    const advanced = runtime.step(1 / 120);
     const events = game.drainEvents();
-    const completed = recorder.observe(game, 1 / 120, events);
+    const completed = recorder.observe(game, advanced ? 1 / 120 : 0, events);
     if (completed) rememberReplay(completed);
     handleEvents(events);
+    if (!advanced) {
+      accumulator = Math.min(accumulator, 1 / 120);
+      break;
+    }
     accumulator -= 1 / 120;
   }
   recordingUI();

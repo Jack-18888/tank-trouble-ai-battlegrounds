@@ -129,7 +129,10 @@ export function startWorkerFixture() {
     accumulator += Math.min(previous ? (time - previous) / 1000 : 0, 0.1);
     previous = time;
     while (accumulator >= 1 / 120) {
-      runtime.step(1 / 120);
+      if (!runtime.step(1 / 120)) {
+        accumulator = Math.min(accumulator, 1 / 120);
+        break;
+      }
       accumulator -= 1 / 120;
     }
     painter.draw(game, time / 1000);

@@ -223,7 +223,7 @@ test('invalid custom movement profiles fail before entering the simulation', () 
   assert.throws(() => new InvalidProfile(), /profile.reaction/);
 });
 
-test('asynchronous bot decisions publish controls without blocking simulation', async () => {
+test('asynchronous bot plans hold the boundary until their decision resolves', async () => {
   class AsyncBot extends AbstractPlayer {
     override async decide() {
       return { throttle: 1 };
@@ -235,6 +235,7 @@ test('asynchronous bot decisions publish controls without blocking simulation', 
   });
   game.state = 'playing';
   game.update(1 / 120);
+  assert.equal(game.tick, 0);
   assert.equal(game.tanks[1].throttle, 0);
   await Promise.resolve();
   await Promise.resolve();

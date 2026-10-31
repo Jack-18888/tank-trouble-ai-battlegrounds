@@ -1,5 +1,6 @@
 import { Player } from './player.ts';
 import { observeWorld } from './observation.ts';
+import { TICK_RATE } from './decision.ts';
 import type { PlayerInput } from '../types.ts';
 import type {
   ConnectionEvents,
@@ -9,7 +10,7 @@ import type {
   WorldFrame,
 } from './connection.ts';
 
-/** Publishes human input changes synchronously; world snapshots are optional for this controller. */
+/** Converts sampled human input into one-tick plans through the common executor. */
 export class HumanConnection implements PlayerConnection {
   private readonly player = new Player();
   private frame?: WorldFrame;
@@ -28,13 +29,28 @@ export class HumanConnection implements PlayerConnection {
   setInput(input: Readonly<PlayerInput>, stamp: ControlStamp) {
     if (this.closed) return;
     const decision = this.player.decide({
+      tick: stamp.tick,
+      tickRate: TICK_RATE,
       input,
       observe: () => {
         if (!this.frame) throw new Error('No human observation yet.');
         return observeWorld(this.init, this.frame, () => 0);
       },
     });
-    this.events.decision({ ...stamp, sequence: ++this.sequence, decision });
+    this.events.decision({
+      ...stamp,
+      sequence: ++this.sequence,
+      decision: {
+        segments: [
+          {
+            ticks: 1,
+            steer: decision.steer,
+            throttle: decision.throttle,
+            ...(decision.fire ? { fire: 'held' as const } : {}),
+          },
+        ],
+      },
+    });
   }
   invalidate() {
     this.frame = undefined;

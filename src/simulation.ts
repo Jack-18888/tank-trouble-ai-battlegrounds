@@ -1,13 +1,20 @@
 import { Game } from './engine.ts';
 import { hasBot } from './bots/index.ts';
 import { PlayerRuntime } from './players/runtime.ts';
-import { InProcessConnection } from './players/in-process-connection.ts';
+import { DECISION_BUDGET_MS, RETRY_TICKS, TICK_DT, TICK_RATE } from './players/decision.ts';
+import type { DecisionStatistics } from './players/runtime.ts';
 import type { BotConnectionFactory } from './players/connection.ts';
 import { ReplayRecorder } from './replay.ts';
 import type { RoundReplay } from './replay.ts';
 import type { GameConfig } from './types.ts';
 
-export const SIMULATION_DT = 1 / 120;
+export const SIMULATION_DT = TICK_DT;
+export const SIMULATION_SCHEDULING = Object.freeze({
+  version: 1,
+  tickRate: TICK_RATE,
+  decisionBudgetMs: DECISION_BUDGET_MS,
+  retryTicks: RETRY_TICKS,
+});
 export type Outcome = 'win' | 'tie' | 'loss';
 export interface SimulationPlan {
   bots: [string, string];
@@ -33,11 +40,13 @@ export interface SimulationResult {
   scores: number[];
   kills: number[];
   simulatedSeconds: number;
+  decisionStatistics?: DecisionStatistics[];
 }
 export interface SimulationReport {
   format: 'tank-trouble-simulation';
-  version: 1;
-  execution: 'in-process' | 'browser-workers';
+  version: 1 | 2;
+  execution: 'in-process' | 'node-workers' | 'browser-workers';
+  scheduling?: typeof SIMULATION_SCHEDULING;
   environment: string;
   /** Requested wall-time multiplier for browser runs; absent in older reports means 1x. */
   browserSpeed?: number;
@@ -71,7 +80,7 @@ export function validateSimulationPlan(plan: SimulationPlan): void {
     throw new Error('Powerups and side swapping must be booleans.');
 }
 
-/** Shared stepping/recording driver. Browser callers keep their real RAF and worker scheduling. */
+/** Shared async stepping/recording driver; callers choose only transport and wall-clock pacing. */
 export class BotSimulation {
   readonly game: Game;
   readonly runtime: PlayerRuntime;
@@ -82,12 +91,14 @@ export class BotSimulation {
   private steps = 0;
   readonly seed: string;
   readonly swapped: boolean;
+  private stepping = false;
 
   constructor(
     readonly plan: SimulationPlan,
     readonly index: number,
     record = false,
-    private readonly factory?: BotConnectionFactory,
+    factory: BotConnectionFactory,
+    now?: () => number,
   ) {
     validateSimulationPlan(plan);
     if (!Number.isSafeInteger(index) || index < 0 || index >= plan.count)
@@ -99,10 +110,7 @@ export class BotSimulation {
       { ...plan, players: ids.map((botId) => ({ kind: 'bot', botId })) },
       this.seed,
     );
-    this.runtime = new PlayerRuntime(
-      this.game,
-      factory ?? ((init, events) => new InProcessConnection(init, events)),
-    );
+    this.runtime = new PlayerRuntime(this.game, factory, now);
     this.recorder = record ? new ReplayRecorder() : null;
     if (this.recorder) this.recorder.enabled = true;
     this.game.start();
@@ -110,20 +118,19 @@ export class BotSimulation {
     if (!this.recorder) this.game.drainEvents();
   }
 
-  step(): SimulationResult | null {
+  async step(): Promise<SimulationResult | null> {
     if (this.result) return this.result;
+    if (this.stepping) throw new Error('Simulation steps must not overlap.');
+    this.stepping = true;
     try {
-      this.runtime.step(SIMULATION_DT);
+      while (!this.runtime.step(SIMULATION_DT)) {
+        if (this.runtime.isDisposed) throw new Error('Simulation was disposed.');
+        await this.runtime.whenUnblocked();
+      }
       this.steps++;
       for (const [id, state] of this.game.players) {
         if (state.status === 'failed')
           throw new Error(`Bot in slot ${id} failed: ${state.failure ?? 'unknown error'}`);
-      }
-      if (!this.factory) {
-        for (const connection of this.runtime.connections.values()) {
-          if (connection instanceof InProcessConnection && connection.hasPendingDecision)
-            throw new Error('Fast in-process simulations require synchronous bot decisions.');
-        }
       }
       const events = this.game.drainEvents();
       this.replay = this.recorder?.observe(this.game, SIMULATION_DT, events) ?? null;
@@ -151,6 +158,9 @@ export class BotSimulation {
           scores: [...game.scores],
           kills: [...game.kills],
           simulatedSeconds: this.steps * SIMULATION_DT,
+          decisionStatistics: this.game.tanks.map((t) => ({
+            ...this.runtime.statistics.get(t.id)!,
+          })),
         };
         this.runtime.dispose();
       }
@@ -160,6 +170,8 @@ export class BotSimulation {
     } catch (error) {
       this.dispose();
       throw error;
+    } finally {
+      this.stepping = false;
     }
   }
 
@@ -170,16 +182,18 @@ export class BotSimulation {
   }
 }
 
-/** No timers, DOM, worker threads, or retained history when recording is disabled. */
-export function runSimulation(
+/** Advance without real-time pacing, awaiting only controller initialization and decision boundaries. */
+export async function runSimulation(
   plan: SimulationPlan,
   index: number,
-  onReplay?: (replay: RoundReplay) => void,
-): SimulationResult {
-  const simulation = new BotSimulation(plan, index, Boolean(onReplay));
+  onReplay: ((replay: RoundReplay) => void) | undefined,
+  factory: BotConnectionFactory,
+  now?: () => number,
+): Promise<SimulationResult> {
+  const simulation = new BotSimulation(plan, index, Boolean(onReplay), factory, now);
   try {
     while (!simulation.result) {
-      simulation.step();
+      await simulation.step();
       if (simulation.replay) onReplay?.(simulation.replay);
     }
     return simulation.result;

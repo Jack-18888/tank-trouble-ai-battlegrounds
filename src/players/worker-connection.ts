@@ -17,15 +17,17 @@ export interface WorkerPort {
 }
 
 /**
- * Main-thread worker transport with one outstanding operation and one replaceable snapshot.
+ * Main-thread worker transport with one outstanding operation and no observation backlog.
  * A missing reply fails only this connection after ten unpaused wall-clock seconds.
  */
 export class WorkerConnection implements PlayerConnection {
   private phase: 'starting' | 'idle' | 'busy' | 'closed' = 'starting';
-  private pending?: WorldFrame;
   private requested?: WorldFrame;
   private waitingMs = 0;
   private sequence = 0;
+  get busy(): boolean {
+    return this.phase === 'busy' || this.phase === 'starting';
+  }
 
   constructor(
     private readonly init: RoundInit,
@@ -43,15 +45,8 @@ export class WorkerConnection implements PlayerConnection {
     }
   }
   observe(frame: WorldFrame) {
-    if (this.phase === 'closed') return;
-    // Overwrite the unsent frame while busy; never post every intermediate state to the worker.
-    this.pending = frame;
-    this.pump();
-  }
-  private pump() {
-    if (this.phase !== 'idle' || !this.pending) return;
-    this.requested = this.pending;
-    this.pending = undefined;
+    if (this.phase !== 'idle') return;
+    this.requested = frame;
     this.phase = 'busy';
     this.waitingMs = 0;
     try {
@@ -84,7 +79,6 @@ export class WorkerConnection implements PlayerConnection {
         this.phase = 'idle';
         this.waitingMs = 0;
         this.events.ready(profile);
-        this.pump();
         return;
       }
       if (
@@ -99,28 +93,22 @@ export class WorkerConnection implements PlayerConnection {
         !Number.isSafeInteger(data.sequence)
       )
         throw new Error('Malformed bot result.');
-      // An invalidated request must still be acknowledged to unblock the transport.
-      // Game.submitDecision separately rejects commands from an obsolete pause/round epoch.
+      // Late replies still release the worker. The coordinator decides whether to admit a plan.
       const expected = stampOf(this.requested);
       for (const key of ['generation', 'round', 'epoch', 'tick'] as const) {
         if (!(key in data.stamp) || data.stamp[key as keyof typeof data.stamp] !== expected[key])
           throw new Error('Mismatched bot observation reply.');
       }
-      if ('decision' in data) {
-        if (
-          !data.decision ||
-          typeof data.decision !== 'object' ||
-          Array.isArray(data.decision) ||
-          data.sequence <= this.sequence
-        )
-          throw new Error('Malformed bot decision.');
-        this.sequence = data.sequence;
-        this.events.decision({ ...expected, sequence: this.sequence, decision: data.decision });
-      } else if (data.sequence !== this.sequence) throw new Error('Mismatched bot sequence.');
+      if (data.sequence <= this.sequence) throw new Error('Mismatched bot sequence.');
+      this.sequence = data.sequence;
+      this.events.decision({
+        ...expected,
+        sequence: this.sequence,
+        decision: 'decision' in data ? data.decision : undefined,
+      });
       this.requested = undefined;
       this.phase = 'idle';
       this.waitingMs = 0;
-      this.pump();
     } catch (error) {
       this.fail(error instanceof Error ? error.message : 'Invalid bot reply.');
     }
@@ -130,10 +118,8 @@ export class WorkerConnection implements PlayerConnection {
     this.waitingMs += Math.max(0, unpausedMilliseconds);
     if (this.waitingMs >= 10_000) this.fail('Bot did not reply within 10 seconds.');
   }
-  /** Keep the in-flight request so its eventual reply can be matched, but drop unsent state. */
-  invalidate() {
-    this.pending = undefined;
-  }
+  /** In-flight replies remain matchable; plan cancellation belongs to the coordinator. */
+  invalidate() {}
   private fail(reason: string) {
     if (this.phase === 'closed') return;
     this.dispose();
@@ -142,7 +128,6 @@ export class WorkerConnection implements PlayerConnection {
   dispose() {
     if (this.phase === 'closed') return;
     this.phase = 'closed';
-    this.pending = undefined;
     this.requested = undefined;
     this.port.terminate();
   }

@@ -5,20 +5,19 @@ description: Run this repository's Tank Trouble simulation CLI, export round rep
 
 # Run bot simulations
 
-Read [the CLI guide](../../../docs/simulations.md) for options, report fields, comparison
-requirements, and the current validation evidence. Run commands from the repository root.
+Read [the CLI guide](../../../docs/simulations.md) for options, async programmatic APIs, report
+fields, comparison requirements, and validation limits. Run commands from the repository root.
 
 ## Choose the experiment
 
-- Use `--rounds N` for independent round win/tie/loss rates. Use `--matches N --target 3|5|10`
-  when the requested outcome is a complete match; omitting `--target` uses 5 wins.
-- Identify results by the first named bot. Slots alternate by default; use an even sample count
-  for exact slot balance unless the user requests fixed sides.
-- Set an explicit seed and preserve map size, density, powerups, target, round cap, and side policy
-  when comparing runs. Each sample has seed `BATCH_SEED:INDEX` with a zero-based index.
-- Keep recording disabled for throughput measurements unless replays are part of the request.
-  Store local reports and recordings under `.qa/`, which Git ignores. Use distinct report paths
-  and a fresh replay directory to preserve previous artifacts.
+- Use `--rounds N` for independent rounds or `--matches N --target 3|5|10` for whole matches
+  (default target 5). Capped matches are separate from ties and excluded from outcome rates.
+- Identify outcomes by the first named bot. Slots alternate; use an even count for exact balance
+  unless fixed sides are requested. Raw winner IDs, scores, kills, and diagnostics use roster order.
+- Fix the seed, map size/density, pickups, target, round cap, sides, profiles, and native plan
+  horizons. Each sample uses `BATCH_SEED:INDEX`, with zero-based indices.
+- Keep recording off for throughput tests unless replay export is requested. Store artifacts
+  under ignored `.qa/` paths; use distinct report paths and fresh replay directories.
 
 ```sh
 npm run simulate -- medium hard --rounds 1000 --seed benchmark --out .qa/headless.json
@@ -26,18 +25,41 @@ npm run simulate -- medium hard --matches 10 --target 3 --seed matches --out .qa
 npm run simulate -- easy hard --rounds 1 --seed replay-check --replays .qa/replay-check
 ```
 
-Registered bot IDs come from `src/bots/index.ts`. Fast in-process runs require synchronous
-decisions. A controller failure aborts the run; do not turn it into a loss or silently replace
-the bot. Capped matches are reported separately and excluded from outcome rates.
+The shared source catalog `src/bots/index.ts` supplies registered IDs. The CLI runs isolated
+Node worker threads; both synchronous and asynchronous strategies are supported. Main-process-only
+registrations do not cross into workers. A controller failure aborts evaluation rather than becoming
+a loss or a silent replacement. The CLI supports two bots; use separate fixtures for 3–6 players.
+
+## Understand timing and diagnostics
+
+Physics uses 120 ticks per simulated second at every speed. Native plans contain ordered segments
+and trigger another observation at expiry. Legacy controls use seeded reaction timing quantized
+to four ticks. Due players see the same completed state; the coordinator commits admitted plans
+together before the next tick.
+
+Each dispatched request has a 10 ms wall-clock deadline. Missing, invalid, or late plans become
+four neutral ticks. Busy workers get no overlapping request or pending snapshot. Initialization and
+the separate ten-second unpaused stuck-worker watchdog retain their own failure handling.
+Headless execution awaits decision boundaries without real-time pacing; async entry points require
+an explicit connection factory. `InProcessConnection` is a local test adapter without CPU isolation.
+
+Report v2 includes scheduling settings and per-slot decisionStatistics: requests, deadlineMisses,
+busySkips, invalidPlans, and lateReplies. Sum the first three skip reasons (deadlineMisses, busySkips,
+invalidPlans) for total skipped Decisions; lateReplies can describe already-counted misses.
+Keep these diagnostics alongside outcomes and throughput.
+
+Identical deterministic bots and admitted Decisions yield reproducible gameplay, but a seed cannot
+guarantee identical deadline admissions across loads, devices, or speeds. Separate exact trace tests
+with controlled admission from real-worker timing evidence; neither alone establishes competitive
+strength or statistical execution equivalence.
 
 ## Validate against browser outcomes
 
-Headless throughput and accurate replay playback do not establish browser outcome equivalence.
-The default acceptance target is within 5 percentage points for each win, tie, and loss rate.
-Use the CLI's paired comparison rather than comparing percentages from unrelated batches.
+Use the CLI's paired comparison with the same bots, plan, source fingerprint, and scheduling
+metadata. It does not compare old versus new strategy strength. Legacy report v1 and new scheduling
+results cannot be treated as a matched experiment. Replay files remain snapshot format v1.
 
-Start the Vite development server, then collect a browser reference and run the matching
-headless batch. Reuse every experiment option in both commands:
+Start Vite, then collect a real-time reference and the matching headless batch:
 
 ```sh
 npm run dev
@@ -48,36 +70,30 @@ npm run simulate -- medium hard --rounds 1000 --seed benchmark --browser --out .
 npm run simulate -- medium hard --rounds 1000 --seed benchmark --compare .qa/browser.json --out .qa/headless.json
 ```
 
-Browser collection uses workers and a rendered reference arena. The default `--browser-speed 1`
-is the real-time reference; a large batch can take hours. State the expected duration before starting a long collection, using observed
-round durations when available. Keep the normal-play reference at 1x. For accelerated experiments,
-use `--browser-speed 2` or `--browser-speed 4`; the CLI supports finite speeds from 1 to 64.
-These runs change worker timing and must be compared against a matching 1x report before making
-claims about normal play. For example, add `--browser --browser-speed 4 --compare .qa/browser.json`
-to the same matchup and experiment options. An accelerated report cannot serve as the reference
-even after a previous comparison passes. Do not substitute simulated worker delays for browser results. `CHROME_PATH` selects Chromium; `--url` selects
-the Vite development server. The production preview server does not expose the required modules.
+The rendered reference uses real browser workers at 1x. Large collections can take hours; state the
+expected duration before starting one, using observed round durations. Keep source, tooling,
+fixtures, and the lockfile unchanged between matched runs. Require complete reports and no caps.
 
-Keep source, tooling, fixtures, and the lockfile unchanged between reference and headless runs:
-their fingerprint must match. Compare complete reports with the same plan and no capped matches.
-If an experiment fails, report its error and incomplete coverage rather than treating its
-partial report as a successful comparison.
+For acceleration use `--browser-speed 2` or `4`; finite speeds from 1 to 64 are accepted. Physics
+tick duration stays fixed, while deadline misses and achieved throughput can differ. Compare each
+accelerated candidate against a matching 1x report before making normal-play claims. Accelerated
+reports never serve as the 1x reference. `CHROME_PATH` selects Chromium and `--url` selects Vite;
+production preview does not expose the collector fixtures. Do not substitute simulated delays for
+observed browser performance.
 
-Interpret the result as `equivalent` (exit 0), `different` (exit 1), or `inconclusive` (exit 2).
-Errors also exit 1. A small sample or overlapping intervals is not evidence of equivalence.
-Choose the sample size in advance; after adjusting bots or scheduling, use fresh confirmation
-samples rather than repeatedly sampling until a comparison passes.
+Comparison uses a default tolerance of five percentage points per outcome and reports equivalent
+(exit 0), different/error (exit 1), or inconclusive (exit 2). Small identical samples or overlapping
+intervals are not evidence of equivalence. Choose sample sizes in advance and use fresh confirmation
+seeds after tuning. Report incomplete or failed coverage without presenting it as a passing comparison.
 
 ## Report the evidence
 
-Give the named-bot perspective, sample unit and count, seed/settings, capped count, outcome
-counts and rates, confidence intervals, execution environment, requested `browserSpeed` for browser
-runs, measured throughput, and comparison status when present.
-`outcome` follows the first named bot, but `winnerId`, `scores`, and `kills` follow roster order;
-account for `swapped` when examining those fields.
+Give the first-bot perspective, sample unit/count, seeds/settings, profiles and plan horizons,
+caps, outcome counts/rates/intervals, environment, requested browserSpeed, achieved throughput,
+skip diagnostics, and comparison status. Link saved reports and replays. Do not extrapolate a smoke
+run to other bots, devices, or large-sample strength.
 
-Separate measured browser sample frequencies from estimates of its underlying rates. Do not
-describe the historical two-round smoke test as large-sample validation, or extrapolate one
-passing matchup to other bots, settings, or devices. Link the saved reports and any replay files.
-For requested replay verification, use `parseReplay` and `ReplayPlayer` from `src/replay.ts`;
-replays are per round and can be uploaded through the game's existing replay panel.
+For replay verification use `parseReplay` and `ReplayPlayer` from `src/replay.ts`. Replays can be
+uploaded in the game's replay panel. Only completed simulation steps count toward recording time;
+decision waits add wall time without adding ticks. Snapshot playback needs no workers or plan
+re-execution and does not depend on reconstructing admissions from a seed.

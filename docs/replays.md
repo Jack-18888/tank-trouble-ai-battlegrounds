@@ -23,4 +23,13 @@ Frame times increase strictly from zero to `duration`. Event times are nondecrea
 
 `ReplayRecorder.observe(game, dt, events)` observes completed simulation steps and returns a replay once, when a recorded round ends. Pass drained events to both the observer and UI consumers. Observing never drains events or changes the game. Set `enabled` before a round begins and call `discard()` when abandoning a match. With recording disabled, no round snapshots or event history are retained.
 
+When using `PlayerRuntime`, pass `1 / 120` only after `runtime.step(1 / 120)` returns `true`.
+If a decision or startup barrier prevents advancement, skip recording or pass zero to capture
+status events without adding simulated time. Paused and decision-wait wall time never extends
+recording duration. `tick` counts completed playing steps in the round; countdown steps advance
+recording time while the playing tick remains zero.
+
+Finite Decision plans and report v2 do not change replay v1. Replays store completed snapshots
+and events, not an executable plan queue, and playback does not recalculate deadline admissions.
+
 `serializeReplay(replay)` produces downloadable JSON. `parseReplay(source)` validates JSON before returning a `RoundReplay`. `ReplayPlayer` applies the last snapshot at or before its playback time, supports seeking and playback speed, and pauses at the final result. It creates no player runtime or workers. Snapshot playback preserves recorded bot timing and does not depend on reconstructing simulation randomness from the map seed.

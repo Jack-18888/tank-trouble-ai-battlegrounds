@@ -49,7 +49,7 @@ export function compareReports(
 ) {
   if (!(tolerance > 0 && tolerance < 1)) throw new Error('Tolerance must be between 0 and 1.');
   if (
-    !['in-process', 'browser-workers'].includes(candidate.execution) ||
+    !['in-process', 'node-workers', 'browser-workers'].includes(candidate.execution) ||
     browser.execution !== 'browser-workers'
   )
     throw new Error('Compare a simulation report against a browser-workers reference.');
@@ -62,6 +62,8 @@ export function compareReports(
   if (candidate.execution === 'browser-workers') validateBrowserSpeed(candidate.browserSpeed ?? 1);
   if (candidate.sourceHash !== browser.sourceHash)
     throw new Error('Comparison reports must come from the same source revision.');
+  if (JSON.stringify(candidate.scheduling) !== JSON.stringify(browser.scheduling))
+    throw new Error('Comparison reports must use the same scheduling settings.');
   const fields = [
     'bots',
     'count',

@@ -1,6 +1,19 @@
 import type { BotContext } from '../bots/types.ts';
 import type { PlayerInput } from '../types.ts';
 
+/** Controls executed together for an exact number of physics ticks. */
+export interface DecisionSegment {
+  ticks: number;
+  steer?: number;
+  throttle?: number;
+  fire?: 'once' | 'held';
+}
+
+/** A finite program; another observation is requested when all segments finish. */
+export interface Decision {
+  segments: readonly DecisionSegment[];
+}
+
 /** Held controls, replaced together when the game accepts the next decision. */
 export interface PlayerDecision {
   /** -1 turns left, +1 turns right. Omitted controls are neutral. */
@@ -17,7 +30,7 @@ export interface PlayerProfile {
   speed: number;
   /** Radians per second at full steering. */
   turn: number;
-  /** Simulation seconds between bot decisions; zero decides on every available observation. */
+  /** Legacy control-plan interval in simulation seconds; native Decisions specify their own ticks. */
   reaction: number;
   /** Maximum random firing-angle deviation in radians; zero gives exact aim. */
   error: number;
@@ -27,6 +40,9 @@ export interface PlayerProfile {
 
 /** Local strategy API; query functions are rebuilt in each worker rather than sent in messages. */
 export interface PlayerContext {
+  /** Completed playing ticks in the current round. */
+  readonly tick: number;
+  readonly tickRate: number;
   /** Current human controls, or an empty object for bots. */
   readonly input: Readonly<PlayerInput>;
   /** Request a detached, immutable world snapshot, shared within this decision. */

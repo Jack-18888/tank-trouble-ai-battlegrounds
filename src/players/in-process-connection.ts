@@ -2,23 +2,14 @@ import { BotBrain } from './bot-brain.ts';
 import { stampOf } from './connection.ts';
 import type { ConnectionEvents, PlayerConnection, RoundInit, WorldFrame } from './connection.ts';
 import type { AbstractPlayer } from './abstract-player.ts';
-import type { PlayerDecision } from './types.ts';
+import type { Decision } from './types.ts';
 
-/**
- * Explicit test/headless adapter using the same scheduler and bounded queue as bot workers.
- * It serializes Promise decisions but shares the caller's thread, so CPU-heavy work blocks it.
- * Browser matches always select the dedicated worker connection.
- */
+/** Explicit local test adapter. Production and CLI use isolated workers. */
 export class InProcessConnection implements PlayerConnection {
   readonly brain: BotBrain;
+  busy = false;
   private sequence = 0;
-  private busy = false;
   private closed = false;
-  private pending?: WorldFrame;
-  /** True while an asynchronous decision is unresolved; fast synchronous runners must not race it. */
-  get hasPendingDecision(): boolean {
-    return this.busy;
-  }
   constructor(
     init: RoundInit,
     private readonly events: ConnectionEvents,
@@ -28,20 +19,12 @@ export class InProcessConnection implements PlayerConnection {
     events.ready(this.brain.player.profile);
   }
   observe(frame: WorldFrame) {
-    if (this.closed) return;
-    if (this.busy) {
-      this.pending = frame;
-      return;
-    }
+    if (this.closed || this.busy) return;
     this.busy = true;
-    const complete = (decision: PlayerDecision | undefined) => {
+    const complete = (decision: Decision) => {
       if (this.closed) return;
-      if (decision)
-        this.events.decision({ ...stampOf(frame), sequence: ++this.sequence, decision });
       this.busy = false;
-      const pending = this.pending;
-      this.pending = undefined;
-      if (pending) this.observe(pending);
+      this.events.decision({ ...stampOf(frame), sequence: ++this.sequence, decision });
     };
     try {
       const result = this.brain.decide(frame);
@@ -56,12 +39,10 @@ export class InProcessConnection implements PlayerConnection {
     this.events.failed(error instanceof Error ? error.message : 'Bot calculation failed.');
     this.dispose();
   }
-  invalidate() {
-    this.pending = undefined;
-  }
+  invalidate() {}
   advance() {}
   dispose() {
     this.closed = true;
-    this.pending = undefined;
+    this.busy = false;
   }
 }

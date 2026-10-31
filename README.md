@@ -76,13 +76,13 @@ Completed rounds appear in the panel. Select a round and click **Save replay** t
 
 Click **Upload replay** and choose a supported file to watch it in the arena. Use play/pause (or Escape/P), the timeline, and 0.5×/1×/2×/4× speed. Playback stops on the recorded result. **Back to setup** returns to the game. Uploading pauses an active match; cancelling the picker or choosing an invalid file leaves that match available to resume. Files are read locally, with a 32 MB limit and validation before playback.
 
-The observability layer records completed gameplay snapshots at 30 Hz, plus timestamped simulation events from every 120 Hz physics tick. Playback applies the recorded state without starting workers, recalculating decisions, or advancing physics, so asynchronous bot timing is preserved. Cosmetic particles, screen shake, track marks, and audio are omitted. See [the replay format](docs/replays.md) for the versioned JSON contract.
+The observability layer records completed gameplay snapshots at 30 Hz, plus timestamped simulation events from every 120 Hz physics tick. Playback applies the recorded state without starting workers, recalculating decisions, or advancing physics, so the recorded gameplay is preserved. Cosmetic particles, screen shake, track marks, and audio are omitted. See [the replay format](docs/replays.md) for the versioned JSON contract.
 
 ## Source layout
 
 - `src/types.ts`: game entities, match states, configuration, physics shapes, and discriminated event types.
 - `src/engine.ts`: DOM-free simulation, seeded maze generation, pathfinding, immutable observations, queued player command application, swept projectile collisions, power-ups, and match state.
-- `src/players/`: shared abstract player contract, runtime, human/worker connections, bounded messaging, per-bot scheduling, profiles, and roster controller swaps.
+- `src/players/`: shared abstract player contract, finite Decision validation/execution, tick scheduler, human/worker connections, profiles, and roster controller swaps.
 - `src/bots/`: shared bot API and registry used by the game and setup UI; `builtin/` contains the Easy/Medium/Hard implementations and their combat/navigation helpers.
 - `src/scoreboard.ts`: live round-win, total kill, and current-round kill displays for every tank.
 - `src/renderer.ts`: cached maze rendering, tanks, shells, tracks, and particles.
@@ -95,24 +95,37 @@ The observability layer records completed gameplay snapshots at 30 Hz, plus time
 - `tests/engine.test.ts`: maze connectivity across 270 layouts, spawning, collision rules, scoring, power-ups, pausing, and all three bot levels.
 - `tests/collision-regressions.test.ts`: wall-edge firing and turning, muzzle clearance, rotated hitboxes, tight corridors, rounded wall caps, and relative shell/tank travel speed.
 - `tests/bots.test.ts`: custom controller registration, immutable observations, query helpers, movement controls, and per-opponent lifecycle.
-- `tests/connections.test.ts`: readiness, command ordering, backpressure, stale replies, pause/resume, lifecycle cleanup, worker failures/timeouts, and independent randomness.
+- `scripts/node-bot-connection.ts`, `scripts/node-bot-worker.mjs`: Node worker transport and TypeScript bootstrap using the shared worker host.
+- `tests/connections.test.ts`: initialization barriers, simultaneous plan admission, 10 ms deadlines, neutral retries, stale replies, pause/resume, lifecycle cleanup, worker failures, and independent randomness.
+- `tests/decisions.test.ts`: atomic plan validation, exact segment durations, combined controls, firing modes, and collision-independent plan expiry.
+- `tests/node-workers.test.ts`, `tests/helpers/tick-trace.ts`: gameplay trace parity across local/Node workers and different batching cadences; browser checks exercise the same fixture with real Web Workers.
 - `tests/players.test.ts`: human input in any slot, controller swapping, roster validation, preference migration, reaction timing, and bot-only round progression.
 - `tests/replay.test.ts`: recording boundaries, JSON round trips, immutable capture, playback controls, and malformed file rejection.
 
-To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each bot runs in its own dedicated Web Worker, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
+To add a strategy, extend `AbstractPlayer` from `src/players/index.ts`, implement `decide(context)` using `context.observe()` for world information, and register it in `src/bots/index.ts`. It becomes selectable in match setup automatically. `Player`, `EasyBot`, `MediumBot`, and `HardBot` share this base class; each browser bot runs in its own dedicated Web Worker, recreated each round. See [Adding a bot](docs/bots.md) for a complete implementation example and the observation/control API.
 
 For competing AI models, start with [Building a competitive bot](docs/competing-bots.md): profile
 comparisons, strategy ideas, game mechanics, seeded benchmarks, and a reusable handoff prompt. The
 repository also provides a [`build-competitive-bot` skill](.agents/skills/build-competitive-bot/SKILL.md)
 and [agent entry point](AGENTS.md).
 
-Programmatic browser matches create a `Game` with the desired roster and a `PlayerRuntime(game, browserBotConnection)` (import the factory from `src/players/browser-connection.ts`). Call `game.start()`, advance with `runtime.step(dt)`, and send keyboard/touch changes through `runtime.setInput(input)`. Dispose the runtime when replacing the game. Use only bot slots for spectator matches. Old saved preferences migrate automatically.
+Programmatic browser matches create a `Game` with the desired roster and a `PlayerRuntime(game, browserBotConnection)` (import the factory from `src/players/browser-connection.ts`). Call `game.start()` and attempt fixed steps with `runtime.step(1 / 120)`. Its boolean result reports whether simulation advanced: consume a timestep and advance recording time only when it returns `true`. Async drivers can await `runtime.whenUnblocked()` before retrying. Send keyboard/touch changes through `runtime.setInput(input)` and dispose the runtime when replacing the game. Use only bot slots for spectator matches. Old saved preferences migrate automatically.
 
-The game runs physics at 120 Hz and publishes completed world snapshots at 30 Hz. Bot decisions run independently in dedicated workers; a slow calculation does not hold up the game or other bots. The game retains each player's last commands until a newer decision arrives. Each worker has one observation in flight and one replaceable pending snapshot. Human commands take effect on the next physics tick without waiting for an observation.
+The game uses one round-scoped 120 Hz tick clock. Bots submit finite Decision plans containing
+ordered control segments; the coordinator requests another Decision when the plan expires.
+Existing bots are adapted using their seeded reaction timing. Every due bot observes the same
+completed tick, and plans are committed together before the next physics step.
 
-Worker errors or ten seconds without a reply (excluding paused time) stop that tank's controls and mark it OFFLINE. The match continues; the controller is recreated next round. Pausing clears controls and invalidates pending decisions. Browser matches never fall back to calculating bots on the main thread.
+Decision requests have a 10 ms wall-clock deadline. A missing or invalid Decision produces four
+neutral ticks; late plans are discarded and busy workers receive no overlapping requests.
+Rendering stays responsive while simulation awaits decisions. Human input uses the same executor
+with one-tick plans. Startup and crash handling retain the separate ten-second unpaused watchdog
+and OFFLINE notice. Browser play always isolates bots in dedicated workers.
 
-Seeded maps and deterministic physics remain supported. Live worker reply timing can vary, so a seed alone does not reproduce an entire live match. Headless tests explicitly inject `InProcessConnection` through the runtime factory; `Game.update(dt)` itself only advances physics.
+Deterministic bots, identical setup/input, and identical admitted Decisions yield identical gameplay.
+Hard wall-clock deadlines can skip different Decisions under different workloads, so a seed alone
+does not reproduce every live match. Snapshot replays remain repeatable. Unit tests explicitly inject
+InProcessConnection; Game.update(dt) only advances physics.
 
 The simulation uses a fixed timestep independently of the display refresh rate. Maze generation starts with a randomized spanning tree, then adds openings, so every tile stays reachable at every density. Bot movement uses breadth-first paths; hard bots additionally trace candidate bank shots.
 
@@ -127,14 +140,17 @@ npm run simulate -- easy hard --rounds 1 --replays .qa/sample-replays
 ```
 
 Starting slots alternate, and win/tie/loss statistics describe the first named bot. The runner uses
-the existing 120 Hz engine and in-process synchronous bot adapter. A seed does not guarantee parity
-with asynchronous browser matches; statistical agreement must be measured. An optional real-time
+the shared 120 Hz scheduler and isolated Node worker threads. Deadline misses can differ between
+runs; inspect the report diagnostics alongside outcomes. An optional real-time
 browser reference collector compares rate differences against a default tolerance of 5 percentage
 points, with confidence intervals and an explicit inconclusive result for insufficient evidence.
 See [headless simulations and browser comparison](docs/simulations.md) for options and validation.
 
 Browser runs can request acceleration with `--browser --browser-speed 4`. The default remains 1x;
 reports retain the requested speed, and comparisons against normal browser play require a 1x reference.
+Reports use format version 2 with scheduling settings and per-player skipped-decision diagnostics.
+Round replay files remain version 1. See the simulation guide for the async programmatic API and
+explicit Node worker factory.
 
 ## Browser verification
 

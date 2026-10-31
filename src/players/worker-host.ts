@@ -31,13 +31,13 @@ export function serveBotWorker(
           if (!brain || busy) throw new Error('Invalid worker observation order.');
           busy = true;
           const decision = await brain.decide(message.frame);
-          // Acknowledgments carry the last decision sequence even when no new controls are due.
-          if (decision) sequence++;
+          // Each requested boundary produces one finite plan; there is no worker-side scheduler.
+          sequence++;
           send({
             type: 'result',
             stamp: stampOf(message.frame),
             sequence,
-            ...(decision ? { decision } : {}),
+            decision,
           });
           busy = false;
         } else throw new Error('Unknown worker message.');

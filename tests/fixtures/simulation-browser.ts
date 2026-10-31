@@ -11,47 +11,55 @@ let status: { result: SimulationResult | null; error: string | null } = {
   error: null,
 };
 
-/** At 1x, uses main.ts's real-time accumulator. Faster modes scale time, retaining fixed ticks. */
+/** RAF only paces and renders; an independent serial pump awaits decision boundaries. */
 export function start(plan: SimulationPlan, index: number, browserSpeed = 1): void {
   validateBrowserSpeed(browserSpeed);
   stop();
   status = { result: null, error: null };
-  simulation = new BotSimulation(plan, index, false, browserBotConnection);
+  const current = new BotSimulation(plan, index, false, browserBotConnection);
+  simulation = current;
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'display:block;width:960px;height:640px;max-width:100vw';
   document.body.append(canvas);
   renderer = new Renderer(canvas);
   let previous = 0;
   let accumulator = 0;
-  const frame = (time: number) => {
-    if (!simulation || !renderer) return;
+  let pumping = false;
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
     try {
-      accumulator += Math.min((time - (previous || time)) / 1000, 0.1) * browserSpeed;
-      previous = time;
-      // Bound each batch so higher requested speeds still yield to worker replies and rendering.
-      for (
-        let steps = 0;
-        accumulator >= SIMULATION_DT && !simulation.result && steps < 120;
-        steps++
-      ) {
-        simulation.step();
+      for (let steps = 0; accumulator >= SIMULATION_DT && !current.result && steps < 120; steps++) {
+        await current.step();
+        if (simulation !== current) return;
         accumulator -= SIMULATION_DT;
       }
-      renderer.draw(simulation.game, time / 1000);
-      if (simulation.result) status.result = simulation.result;
-      else frameId = requestAnimationFrame(frame);
+      if (current.result) status.result = current.result;
     } catch (error) {
-      status.error = error instanceof Error ? error.message : String(error);
-      simulation.dispose();
+      if (simulation === current) {
+        status.error = error instanceof Error ? error.message : String(error);
+        current.dispose();
+      }
+    } finally {
+      pumping = false;
     }
+  };
+  const frame = (time: number) => {
+    if (simulation !== current || !renderer) return;
+    accumulator = Math.min(
+      1,
+      accumulator + Math.min((time - (previous || time)) / 1000, 0.1) * browserSpeed,
+    );
+    previous = time;
+    void pump();
+    renderer.draw(current.game, time / 1000);
+    if (!status.result && !status.error) frameId = requestAnimationFrame(frame);
   };
   frameId = requestAnimationFrame(frame);
 }
-
 export function poll() {
   return status;
 }
-
 export function stop(): void {
   cancelAnimationFrame(frameId);
   simulation?.dispose();

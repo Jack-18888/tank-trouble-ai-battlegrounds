@@ -1,6 +1,6 @@
 import type { BotObservation } from '../bots/types.ts';
 import type { GameMap, PlayerInput } from '../types.ts';
-import type { PlayerDecision, PlayerProfile } from './types.ts';
+import type { Decision, PlayerDecision, PlayerProfile } from './types.ts';
 
 /** Identifies the simulation state behind a command; counters belong to a single Game instance. */
 export interface ControlStamp {
@@ -18,6 +18,12 @@ export interface DecisionEnvelope extends ControlStamp {
   /** Strictly increasing per connection; observation acknowledgments do not advance it. */
   sequence: number;
   decision: PlayerDecision;
+}
+/** Transport reply; only the coordinator translates plans into per-tick controls. */
+export interface PlanEnvelope extends ControlStamp {
+  sequence: number;
+  /** Transport data stays untrusted until the coordinator validates the entire plan. */
+  decision: unknown;
 }
 /** Dynamic data from one completed tick; map and rules are supplied separately by RoundInit. */
 export interface WorldFrame extends ControlStamp {
@@ -50,14 +56,15 @@ export interface PlayerState {
 /** Connection callbacks; PlayerRuntime binds them to one player and guards their lifetime. */
 export interface ConnectionEvents {
   ready(profile: Readonly<PlayerProfile>): void;
-  decision(envelope: DecisionEnvelope): void;
+  decision(envelope: PlanEnvelope): void;
   failed(reason: string): void;
 }
 /** Transport boundary shared by the human adapter, bot workers, and explicit test adapters. */
 export interface PlayerConnection {
-  /** Offer a snapshot without waiting for a calculation or transport reply. */
+  readonly busy?: boolean;
+  /** Dispatch exactly one request when idle; completion arrives through ConnectionEvents. */
   observe(frame: WorldFrame): void;
-  /** Discard unsent observations; outstanding work may finish but its old epoch cannot act. */
+  /** Preserve transport bookkeeping for outstanding replies; no observations are queued. */
   invalidate(): void;
   /** Advance watchdogs using unpaused wall-clock milliseconds, not simulated dt. */
   advance(unpausedMilliseconds: number): void;
@@ -70,10 +77,10 @@ export type BotConnectionFactory = (init: RoundInit, events: ConnectionEvents) =
 
 export type WorkerRequest =
   { type: 'init'; init: RoundInit } | { type: 'observe'; frame: WorldFrame };
-/** Successful observations are acknowledged even when reaction timing produces no decision. */
+/** Result stamps identify the exact boundary that requested a finite plan. */
 export type WorkerReply =
   | { type: 'ready'; generation: number; round: number; profile: PlayerProfile }
-  | { type: 'result'; stamp: ControlStamp; sequence: number; decision?: PlayerDecision }
+  | { type: 'result'; stamp: ControlStamp; sequence: number; decision: Decision }
   | { type: 'failure'; reason: string };
 
 export function stampOf(frame: ControlStamp): ControlStamp {

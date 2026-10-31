@@ -1,4 +1,5 @@
 import { AbstractPlayer } from '../../src/players/abstract-player.ts';
+import './plan-bot.ts';
 import { registerBot } from '../../src/bots/index.ts';
 import type { PlayerContext, PlayerDecision } from '../../src/players/types.ts';
 

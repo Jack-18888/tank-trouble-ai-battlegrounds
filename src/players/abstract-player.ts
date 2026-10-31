@@ -1,4 +1,4 @@
-import type { PlayerContext, PlayerDecision, PlayerProfile } from './types.ts';
+import type { Decision, PlayerContext, PlayerDecision, PlayerProfile } from './types.ts';
 import { validateProfile } from './profile.ts';
 
 const DEFAULT_PROFILE: Readonly<PlayerProfile> = Object.freeze({
@@ -23,7 +23,9 @@ export abstract class AbstractPlayer {
 
   /**
    * Produce desired controls without mutating the simulation. Bots may return a Promise;
-   * their connection serializes calculations and retains the previous command while waiting.
+   * legacy controls are adapted into a finite plan using the seeded reaction interval.
    */
-  abstract decide(context: PlayerContext): PlayerDecision | Promise<PlayerDecision>;
+  abstract decide(
+    context: PlayerContext,
+  ): Decision | PlayerDecision | Promise<Decision | PlayerDecision>;
 }

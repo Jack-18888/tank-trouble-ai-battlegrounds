@@ -1,164 +1,170 @@
 # Adding a bot
 
-For models developing a competition entry, read [Building a competitive bot](competing-bots.md) for
-strategy guidance, profile comparisons, and an evaluation workflow. This page defines the API.
+For competition strategy and game mechanics, start with [Building a competitive bot](competing-bots.md).
+Extend `AbstractPlayer`, implement `decide(context)`, and register the class in `src/bots/index.ts`.
+The browser and Node workers load the same registry. Existing competitors and their profiles remain supported.
 
-Extend `AbstractPlayer`, implement `decide(context)`, and register the class as a bot. The engine and setup UI both use the registry, so new types do not need changes in either of those modules. Every tank can select a bot controller, including the first tank; matches support zero or one human.
+## Tick-based Decisions
 
-The shared entry point is `src/players/index.ts`. It exports `PlayerRuntime`, the connection/message types, `AbstractPlayer`, the keyboard/touch-controlled `Player`, `HUMAN_PROFILE`, `assignController`, and the `PlayerContext`, `PlayerDecision`, and `PlayerProfile` types. `AbstractPlayer` is a TypeScript abstract class, so missing implementations and incompatible decisions are compiler errors. The former `Bot` export has been removed.
+Every participant shares one round-scoped clock: **120 physics ticks per simulated second**.
+`PlayerContext.tick` is the number of completed playing ticks; `tickRate` is 120. Physics always
+uses 1/120 second. Playback speed changes wall-clock pacing, never the physics timestep.
 
-`src/bots/index.ts` exports `EasyBot`, `MediumBot`, `HardBot`, `registerBot`, `createBot`, `hasBot`, `getBotType`, and `getBotTypes`, plus the bot-specific `BotContext`, `BotMetadata`, and `BotConstructor` types.
+New strategies return a finite `Decision`:
 
-## Implement a strategy
+```ts
+interface DecisionSegment {
+  ticks: number;
+  steer?: number;
+  throttle?: number;
+  fire?: 'once' | 'held';
+}
 
-For example, add `src/bots/sentry-bot.ts`. This bot stays still, remembers an enemy, turns toward it, and fires when its current shot would hit an opponent:
+interface Decision {
+  segments: readonly DecisionSegment[];
+}
+```
+
+Import these types from `src/players/index.ts`; for example, in `src/bots/planned-bot.ts`:
 
 ```ts
 import { AbstractPlayer } from '../players/index.ts';
-import type { PlayerContext, PlayerDecision } from '../players/index.ts';
-import { angleDiff, clamp } from '../math.ts';
+import type { Decision, PlayerContext } from '../players/index.ts';
 
-export class SentryBot extends AbstractPlayer {
-  private targetId: number | null = null;
-
-  constructor() {
-    super({ reaction: 0.1 });
-  }
-
-  override decide({ observe }: PlayerContext): PlayerDecision {
-    const context = observe();
-    const { self, enemies } = context;
-    const target = enemies.find((tank) => tank.id === this.targetId) ?? enemies[0];
-    if (!target) return {};
-
-    this.targetId = target.id;
-    const aim = Math.atan2(target.y - self.y, target.x - self.x);
-    const hit = context.predictShot(self.angle);
-
+export class PlannedBot extends AbstractPlayer {
+  override decide({ observe }: PlayerContext): Decision {
+    const world = observe();
     return {
-      steer: clamp(angleDiff(aim, self.angle) * 3, -1, 1),
-      throttle: 0,
-      fire: hit !== null && hit.id !== self.id,
+      segments: [
+        { ticks: 12, steer: 1, throttle: 1 },
+        { ticks: 24, throttle: 1, fire: world.enemies.length ? 'once' : undefined },
+      ],
     };
   }
 }
 ```
 
-Add its import and registration to `src/bots/index.ts`:
+A segment holds its controls together for exactly `ticks` physics updates. Positive steering turns
+right, negative steering turns left; positive throttle drives forward and negative throttle reverses.
+Numbers are clamped to [-1, 1], with missing or non-finite values becoming zero. Omitted firing is off.
+`fire: 'once'` attempts one volley on the segment's first tick. A blocked muzzle, empty reserve, or
+cooldown can prevent that attempt; it is not retried. `fire: 'held'` attempts firing on every tick.
+Cooldown, ammunition, shields, triple-shot, and rapid-fire retain their existing rules.
+
+Plans have 1–256 segments, positive safe-integer durations, and at most 10,800 total ticks (one round).
+Validation is atomic and accepted plans are detached and frozen. Invalid plans become four neutral ticks.
+
+A plan accepted after completed tick 100 with 36 ticks executes on ticks 101–136. The next observation
+is requested after tick 136. Wall collisions do not end a segment early. The engine simulates every
+intervening tick, including all other tanks, projectiles, and pickups. A plan commits until expiry,
+elimination, or round end.
+
+At a boundary, all bots needing plans observe the same detached world state. Requests run concurrently.
+The coordinator waits for replies or a **10 ms wall-clock deadline measured from dispatch to receipt**,
+then commits results together in player-ID order before advancing physics. Receipt at 10 ms is late.
+A missing decision becomes four neutral ticks. Late plans never control a tank. A still-busy worker
+gets another four-tick neutral plan without another request or an observation backlog.
+
+Rendering and browser input stay responsive during this wait. Human input becomes one-tick plans
+through the same executor. Pause freezes plan cursors and stops new requests; already-dispatched
+requests finish or expire and their outcomes are buffered until resume. Resume clears held human
+input while preserving surviving bot plans and instance memory.
+
+## Compatibility and profiles
+
+The former `PlayerDecision` controls object remains supported:
 
 ```ts
-import { SentryBot } from './sentry-bot.ts';
+override decide({ observe }: PlayerContext): PlayerDecision {
+  const world = observe();
+  return { steer: 0, throttle: 1, fire: world.enemies.length > 0 };
+}
+```
 
-registerBot('sentry', SentryBot, {
-  label: 'Sentry',
-  tagline: 'HOLD THE LINE',
-  description: 'A stationary opponent that tracks its target.',
+The adapter converts legacy controls to one segment. Its duration uses the profile's reaction interval
+and the bot's seeded ±15% timing variation, rounded up to a four-tick boundary; zero reaction produces
+four ticks. Legacy `fire: true` means held firing. Native Decisions specify their own durations and
+do not use a separate reaction scheduler.
+Consequently, native plan horizons affect reaction frequency independently of `profile.reaction`;
+include those horizons when reporting competition settings or comparing strategies.
+
+| Profile  | Default | Meaning                                       |
+| -------- | ------- | --------------------------------------------- |
+| speed    | 96      | Pixels per simulated second                   |
+| turn     | 3.15    | Radians per simulated second                  |
+| reaction | 0.24    | Legacy decision interval in simulated seconds |
+| error    | 0.045   | Maximum random firing-angle deviation         |
+| cooldown | 0.72    | Simulated seconds between shots               |
+
+Settings are finite and positive, except reaction and error may be zero. Human controls retain speed
+114, turn 3.7, reaction/error zero, and cooldown 0.32. Built-in Easy, Medium, and Hard profiles and
+strategies are preserved. Each bot gets a new instance and an independent RNG each round.
+
+## Registration and observations
+
+```ts
+registerBot('planned', PlannedBot, {
+  label: 'Planned',
+  tagline: 'THINK AHEAD',
+  description: 'Executes finite movement plans.',
 });
 ```
 
-It now appears in the difficulty buttons and every tank's controller dropdown alongside Human. Difficulty presets update bot slots only. `label`, `tagline`, and `description` are optional; sensible defaults are supplied. IDs must start with a lowercase letter and contain only lowercase letters, digits, and hyphens. Duplicate IDs and classes that do not implement the base contract are rejected.
+Register in the shared source catalog before starting the game. Main-page-only registrations cannot
+cross worker boundaries. IDs start with a lowercase letter and contain lowercase letters, digits,
+and hyphens; duplicates are rejected. Unknown saved IDs fall back to Medium. Rosters support 2–6
+players and zero or one human; controller swaps and legacy saved preferences remain supported.
 
-For a programmatic match, use the registered ID in the existing configuration:
+`context.input` is immutable and empty for bots. `context.observe()` lazily creates a detached,
+deeply frozen `BotContext`, shared across calls within one decision. It includes `self`, all tanks,
+living enemies, bullets, pickups, map geometry/seed, rules, and match state, elapsed seconds, scores,
+and match-long kills. The current tank's kills are round-local. Positions use world pixels and angles
+use radians, clockwise from the right-facing direction.
+
+| Query                              | Meaning                                                     |
+| ---------------------------------- | ----------------------------------------------------------- |
+| random()                           | Advance this bot's seeded RNG                               |
+| cellAt(x, y)                       | Find a map cell                                             |
+| findPath(startId, goalId)          | Breadth-first cell route                                    |
+| lineOfSight(from, to)              | Wall visibility query                                       |
+| predictShot(angle, maxBounces = 0) | First predicted tank hit, including possible self ricochets |
+
+Queries use the same geometry as physics and remain tied to their observation. Use the provided
+random stream; clocks, unseeded randomness, network data, and other external state cannot provide
+reproducible decisions. Keep memory in instance fields and browser-imported strategy code free of
+Node.js APIs. Both synchronous and Promise-returning strategies are supported.
+
+## Runtime and failures
 
 ```ts
-import { Game } from './src/engine.ts';
 import { PlayerRuntime } from './src/players/index.ts';
 import { browserBotConnection } from './src/players/browser-connection.ts';
 
-const game = new Game({
-  players: [{ kind: 'human' }, { kind: 'bot', botId: 'sentry' }, { kind: 'bot', botId: 'hard' }],
-});
 const runtime = new PlayerRuntime(game, browserBotConnection);
 game.start();
-// In your fixed-timestep loop: runtime.step(1 / 120).
-// On keyboard/touch changes: runtime.setInput(input).
-// When replacing the match: runtime.dispose().
+// On each fixed-step opportunity:
+if (runtime.step(1 / 120)) {
+  // Consume events and record one completed timestep.
+}
+// A false return means no simulation time advanced.
+// Async drivers can await runtime.whenUnblocked() before retrying.
+runtime.setInput(input);
+runtime.dispose(); // Before replacing the game.
 ```
 
-Register in the shared source catalog before constructing the game or loading the setup UI. Both the main bundle and bot worker import this catalog. A class registered only at runtime in the main page is not available inside a worker; functions and constructors cannot be sent in messages. Unknown IDs in saved preferences fall back to Medium, allowing a removed custom bot to leave the game usable. Omit the human slot for a bot-only match. Rosters contain 2–6 tanks; validation pads short rosters with Medium bots, truncates long ones, and retains only the first human (additional humans become Medium bots). Saved settings from the old `opponents`/`difficulties` format migrate automatically; an explicit `players` field takes precedence.
+Initialize all controllers before advancing the countdown. Startup errors, thrown/rejected decisions,
+malformed protocol replies, and ten unpaused wall-clock seconds without a reply mark only that tank
+OFFLINE; it stays vulnerable and is recreated next round. A single missed 10 ms decision deadline
+does not mark the tank OFFLINE. Disposal releases outstanding waits and prevents obsolete replies
+from affecting a replacement round. There is no browser main-thread fallback.
 
-## Decision contract
+The CLI selects Node worker threads using the same host and connection protocol. Unit tests can
+explicitly inject `InProcessConnection`; this adapter provides no CPU isolation and is not the
+production deadline-enforcement path. `Game.update(dt)` remains physics-only.
 
-`abstract decide(context: PlayerContext): PlayerDecision | Promise<PlayerDecision>` is the required method. Bots may return synchronously or asynchronously; their constructors and decisions run inside dedicated Web Workers. `context.input` is immutable and contains the current keyboard/touch input for the human slot, or an empty object for bots. `context.observe()` lazily creates the existing detached, frozen `BotContext` world snapshot and returns the same snapshot on repeated calls within a decision. Human controllers do not need to request observations. It returns an object with any of these controls:
+Deterministic bots, identical setup/input, and identical admitted Decisions yield identical gameplay.
+Hard wall-clock deadlines can admit different plans on different runs or machines, so a seed alone
+does not guarantee a complete match. Snapshot replay playback remains repeatable.
 
-| Field      | Meaning                                                             | Default |
-| ---------- | ------------------------------------------------------------------- | ------- |
-| `steer`    | -1 turns left; +1 turns right; intermediate values turn more slowly | 0       |
-| `throttle` | -1 reverses; +1 moves forward; intermediate values reduce speed     | 0       |
-| `fire`     | `true` holds the trigger; cooldown and ammo limits still apply      | false   |
-
-Numbers are clamped to [-1, 1]. Missing or non-finite numbers become zero; only boolean `true` fires. The game owns movement, collisions, projectiles, scoring, and all timing. Promise results are published when they resolve, while the simulation continues applying the previous commands. A rejected decision fails only that controller.
-
-The last decision remains active until the next call. Every bot receives its own controller instance inside a dedicated worker, recreated each round. `game.players` contains connection status (`connecting`, `ready`, `failed`, or `closed`), the validated movement profile, and command-ordering metadata; it no longer exposes controller instances. Store strategy memory in instance fields. Observation delivery stops while paused, during countdowns, after elimination, and between rounds. An already running calculation may finish during a pause, but its reply cannot change controls. `game.humanId` identifies the human tank, or is `null` in bot-only matches. `runtime.setInput(input)` supplies human input regardless of its slot; `runtime.step(dt)` advances the simulation and publishes observations. `game.update(dt)` only applies queued commands and advances physics. Each tank's `controller` metadata describes its human or bot configuration.
-
-## Available game information
-
-`BotContext` is defined in `src/bots/types.ts` using deeply read-only versions of the game entities in `src/types.ts`. Observations are detached copies and deeply frozen. The compiler rejects mutation of observation fields as well as incompatible controls; runtime checks also protect JavaScript callers. Strategies can read all of the following without modifying the live simulation:
-
-| Field      | Contents                                                                                                                                                 |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `self`     | Own tank: ID, position, angle, velocity, cooldown, reserve `ammo`, refill `ammoProgress`, shield, power-up timers, and movement-stagnation timer `stuck` |
-| `tanks`    | Every tank, including the player and eliminated tanks                                                                                                    |
-| `enemies`  | Living tanks other than `self`; order is not a targeting priority                                                                                        |
-| `bullets`  | Shell positions, velocities, owners, remaining lifetime, age, and bounce count                                                                           |
-| `powerups` | Available pickup types, positions, and lifetimes                                                                                                         |
-| `map`      | Dimensions, cell coordinates and adjacency walls, collision wall segments, and seed                                                                      |
-| `match`    | State, round number, elapsed round seconds, round-win scores, match-long kill totals, and win target                                                     |
-| `rules`    | `cellSize`, `playerSpeed`, `shellSpeed`, `shellLifetime`, `maxAmmo`, `roundDuration`, and `infiniteAmmoDuration`                                         |
-
-Positions and velocities use world pixels and pixels per second. Angles use radians; zero faces right and positive rotation turns clockwise. Each cell's `walls` array is ordered north, east, south, west; `true` means blocked. `self.stuck` is a short-lived movement sensor, reset periodically after about 1.5 seconds of blockage.
-
-Useful query methods are provided alongside the data:
-
-| Method                               | Result                                                                                        |
-| ------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `random()`                           | Seeded random value in [0, 1); use this instead of `Math.random()` for reproducible decisions |
-| `cellAt(x, y)`                       | Cell ID for world coordinates                                                                 |
-| `findPath(startId, goalId)`          | Reachable cell IDs including both endpoints                                                   |
-| `lineOfSight(from, to)`              | Whether a wall obstructs visibility between positions                                         |
-| `predictShot(angle, maxBounces = 0)` | First tank a hypothetical shot hits, as `{ id, distance }`, or `null`                         |
-
-Visibility, path, and shot queries use the observation's snapshot, even if it is retained into a later frame. Shot prediction uses the same muzzle, tank silhouettes, ricochets, shell speed, and lifetime as the simulation. Check the hit ID: a bank shot can hit its owner. `random()` advances that bot’s independent seeded random stream. It cannot advance physics randomness or another bot’s stream.
-
-## Movement profile and built-in bots
-
-Pass overrides to `super(profile)` for the following immutable settings:
-
-| Setting    | Default | Units                                                              |
-| ---------- | ------- | ------------------------------------------------------------------ |
-| `speed`    | 96      | Pixels per second at full throttle                                 |
-| `turn`     | 3.15    | Radians per second at full steering                                |
-| `reaction` | 0.24    | Seconds between decisions, with the existing ±15% timing variation |
-| `error`    | 0.045   | Maximum random firing-angle error in radians                       |
-| `cooldown` | 0.72    | Seconds between shots                                              |
-
-All settings must be finite and positive, except `error` and `reaction`, which may be zero. Zero reaction decides on each available observation (up to 30 Hz) without timing variation; strategies using `CombatStrategy` should retain a positive reaction interval. The human `Player` uses speed 114, turn rate 3.7, reaction 0, error 0, and cooldown 0.32. Reaction time and strategy memory are separate from the fixed physics timestep. Power-ups can override firing cooldown for all players.
-
-`Player`, `EasyBot`, `MediumBot`, and `HardBot` each extend `AbstractPlayer` directly and implement their own `decide` method. The three built-in bots live in `src/bots/builtin/`. Each bot owns a `CombatStrategy` from `src/bots/builtin/combat.ts`, with independent route memory in `MazeNavigator` from `src/bots/builtin/navigation.ts`. A route keeps its cell-center waypoint until the tank reaches it, then advances; crossing a cell boundary does not reset the waypoint. Bots align before driving through a corridor and brake near turns. Hard predicts moving targets and takes opportunistic bank shots while pursuing, so firing decisions do not keep replacing its travel heading. Medium and Hard dodge nearby shells; Easy applies its own firing hesitation. Their constructors retain the existing movement and firing profiles. Timing is quantized to the available observations. A custom class can compose `CombatStrategy` or implement a completely different strategy.
-
-Run `npm run check` and `npm run build` after adding a bot. `tests/bots.test.ts` covers the extension contract, registration, observations, query consistency, execution in the game, independent memory, and round resets. The browser check also registers a custom implementation and exercises it through the real setup UI.
-
-## Connections, worker lifecycle, and headless use
-
-The main thread owns physics at 120 Hz. `PlayerRuntime` publishes a detached, immutable dynamic world frame at 30 Hz after a completed physics tick; every connection receives that same frame. The map and fixed rules travel once at round initialization. Query functions are reconstructed inside the worker using the same geometry and prediction code as the simulation.
-
-Each worker has one outstanding operation and one replaceable pending observation. A slow bot never builds a backlog. After it replies, it receives the newest pending state. Decisions are serialized; there are no overlapping calculations or catch-up bursts. Each bot uses simulation time for its reaction delay and its own seeded randomness for timing variation and strategy choices.
-
-Commands carry generation, round, pause epoch, observation tick, and sequence. The game accepts newer commands for the current living player and applies them at the next physics boundary. Human input uses this same submission mechanism immediately when input changes. Controls remain neutral before readiness; the game does not wait for all workers to initialize.
-
-Pause clears controls, invalidates pending commands, and suspends observation delivery. Resume requests fresh decisions while retaining surviving strategy memory. Elimination, round replacement, quitting, and runtime disposal terminate the affected workers. Old callbacks cannot control a new round. A worker startup error, crash, malformed reply, rejection, or ten unpaused wall-clock seconds without an outstanding-operation reply stops its tank and marks it OFFLINE. The tank remains vulnerable; the match continues and the controller is retried next round. There is no main-thread fallback.
-
-For headless simulation, explicitly select the local adapter:
-
-```ts
-import { PlayerRuntime } from './src/players/index.ts';
-import { InProcessConnection } from './src/players/in-process-connection.ts';
-
-const runtime = new PlayerRuntime(game, (init, events) => new InProcessConnection(init, events));
-game.start();
-runtime.step(1 / 120);
-```
-
-The adapter supports deterministic fixed-input tests and asynchronous strategy tests. It does not provide CPU isolation; browser matches always use the worker factory. Seeded maps and fixed-command physics are reproducible, while live worker arrival timing can vary. For fast synchronous batches, compatible replay export, and statistical browser comparison, see [headless simulations](simulations.md).
-
-Match statistics expose `game.scores` (round wins) and `game.kills` (opponent eliminations across all rounds). Both reset when a new match starts. Observations provide the same match totals as `context.match.scores` and `context.match.kills`; `context.self.kills` remains the current round’s count. Eliminated players can still earn credit from their remaining shells, while shield hits and self-inflicted ricochets do not add kills.
+Run `npm run check`, `npm run build`, and browser checks after changing a strategy or its integration.
+See [simulations](simulations.md) for acceleration, reporting, and browser validation.

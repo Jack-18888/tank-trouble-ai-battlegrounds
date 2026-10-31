@@ -346,9 +346,9 @@ for (const difficulty of ['easy', 'medium', 'hard'])
     let traveled = 0,
       shots = 0,
       kills = 0;
-    for (let i = 0; i < 60 * 40; i++) {
+    for (let i = 0; i < 120 * 40; i++) {
       const before = { x: game.tanks[1].x, y: game.tanks[1].y };
-      game.update(1 / 60);
+      game.update(1 / 120);
       traveled += distance(before, game.tanks[1]);
       for (const e of game.drainEvents()) {
         if (e.type === 'fire') shots++;

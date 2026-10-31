@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BotSimulation, runSimulation } from '../src/simulation.ts';
+import { BotSimulation, runSimulation as driveSimulation } from '../src/simulation.ts';
 import type { SimulationPlan, SimulationReport, SimulationResult } from '../src/simulation.ts';
 import {
   compareReports,
@@ -13,6 +13,17 @@ import type { PlayerDecision } from '../src/players/types.ts';
 import { registerBot } from '../src/bots/index.ts';
 import { parseReplay, ReplayPlayer, serializeReplay } from '../src/replay.ts';
 import type { RoundReplay } from '../src/replay.ts';
+
+import { InProcessConnection } from '../src/players/in-process-connection.ts';
+const local = (
+  init: Parameters<import('../src/players/connection.ts').BotConnectionFactory>[0],
+  events: Parameters<import('../src/players/connection.ts').BotConnectionFactory>[1],
+) => new InProcessConnection(init, events);
+const runSimulation = (
+  plan: SimulationPlan,
+  index: number,
+  onReplay?: (replay: RoundReplay) => void,
+) => driveSimulation(plan, index, onReplay, local, () => 0);
 
 const plan: SimulationPlan = {
   bots: ['medium', 'hard'],
@@ -45,10 +56,10 @@ registerBot('simulation-idle', Idle);
 registerBot('simulation-async', AsyncBot);
 registerBot('simulation-broken', BrokenBot);
 
-test('seeded in-process rounds are reproducible and recording preserves gameplay', () => {
+test('seeded in-process rounds are reproducible and recording preserves gameplay', async () => {
   const replays: RoundReplay[] = [];
-  const plain = runSimulation(plan, 0);
-  const recorded = runSimulation(plan, 0, (replay) => replays.push(replay));
+  const plain = await runSimulation(plan, 0);
+  const recorded = await runSimulation(plan, 0, (replay) => replays.push(replay));
   assert.deepEqual(recorded, plain);
   assert.equal(recorded.rounds, 1);
   assert.equal(recorded.seed, 'SIMULATION-QA:0');
@@ -62,15 +73,15 @@ test('seeded in-process rounds are reproducible and recording preserves gameplay
   assert.deepEqual(player.game.tanks, replay.frames.at(-1)?.tanks);
 });
 
-test('alternating slots retains outcomes from the first named bot perspective', () => {
+test('alternating slots retains outcomes from the first named bot perspective', async () => {
   for (const index of [0, 1]) {
-    const simulation = new BotSimulation(plan, index);
+    const simulation = new BotSimulation(plan, index, false, local, () => 0);
     try {
       assert.equal(simulation.swapped, index === 1);
       const slot = index === 1 ? 1 : 0;
       assert.deepEqual(simulation.game.config.players[slot], { kind: 'bot', botId: 'medium' });
       simulation.game.finishRound(simulation.game.tanks[slot]);
-      assert.equal(simulation.step()?.outcome, 'win');
+      assert.equal((await simulation.step())?.outcome, 'win');
       assert.equal(simulation.result?.winnerId, slot);
     } finally {
       simulation.dispose();
@@ -78,9 +89,9 @@ test('alternating slots retains outcomes from the first named bot perspective', 
   }
 });
 
-test('whole matches finish at their win target and export every completed round', () => {
+test('whole matches finish at their win target and export every completed round', async () => {
   const rounds: RoundReplay[] = [];
-  const result = runSimulation({ ...plan, target: 3 }, 0, (replay) => rounds.push(replay));
+  const result = await runSimulation({ ...plan, target: 3 }, 0, (replay) => rounds.push(replay));
   assert.ok(result.outcome === 'win' || result.outcome === 'loss');
   assert.equal(Math.max(...result.scores), 3);
   assert.equal(rounds.length, result.rounds);
@@ -92,15 +103,15 @@ test('whole matches finish at their win target and export every completed round'
   assert.equal(rounds.at(-1)?.frames.at(-1)?.state, 'matchOver');
 });
 
-test('round ties and capped matches remain distinct in batch statistics', () => {
+test('round ties and capped matches remain distinct in batch statistics', async () => {
   const idle: SimulationPlan = {
     ...plan,
     bots: ['simulation-idle', 'simulation-idle'],
     powerups: false,
   };
-  const tie = runSimulation(idle, 0);
+  const tie = await runSimulation(idle, 0);
   assert.equal(tie.outcome, 'tie');
-  const capped = runSimulation({ ...idle, target: 3, maxRounds: 2 }, 0);
+  const capped = await runSimulation({ ...idle, target: 3, maxRounds: 2 }, 0);
   assert.equal(capped.outcome, 'capped');
   assert.equal(capped.rounds, 2);
   const summary = summarizeResults([tie, capped]);
@@ -110,16 +121,20 @@ test('round ties and capped matches remain distinct in batch statistics', () => 
   assert.equal(summary.rates.win.rate, 0);
 });
 
-test('async decisions and controller failures abort instead of producing misleading outcomes', () => {
-  assert.throws(
-    () => runSimulation({ ...plan, bots: ['simulation-async', 'medium'] }, 0),
-    /synchronous/,
+test('async strategies are supported and failures abort a benchmark', async () => {
+  const result = await runSimulation(
+    { ...plan, bots: ['simulation-async', 'simulation-idle'], powerups: false },
+    0,
   );
-  assert.throws(
-    () => runSimulation({ ...plan, bots: ['simulation-broken', 'medium'] }, 0),
+  assert.equal(result.outcome, 'tie');
+  await assert.rejects(
+    runSimulation({ ...plan, bots: ['simulation-broken', 'medium'] }, 0),
     /Expected simulation failure/,
   );
-  assert.throws(() => runSimulation({ ...plan, bots: ['missing-bot', 'medium'] }, 0), /registered/);
+  await assert.rejects(
+    runSimulation({ ...plan, bots: ['missing-bot', 'medium'] }, 0),
+    /registered/,
+  );
 });
 
 test('CLI rejects ambiguous modes, unknown settings, and invalid counts', () => {

@@ -24,7 +24,8 @@ export const SIMULATION_HELP = `Usage: npm run simulate -- BOT_A BOT_B [options]
   --help              Show this help
 
 Results describe the first named bot. Slots alternate, seeds differ for every sample.
-Browser speed changes worker timing; accelerated runs are not 1x references. A comparison exits
+Tick lengths stay fixed at every speed; 10 ms deadline misses can change outcomes between runs.
+Accelerated runs are not 1x references. A comparison exits
 0 for equivalent, 1 for different/error, or 2 for inconclusive. Large samples do not remove bias.
 `;
 
@@ -59,7 +60,7 @@ export function parseSimulationOptions(args: string[]) {
     throw new Error('Choose --rounds or --matches, not both.');
   if (values.target !== undefined && values.matches === undefined)
     throw new Error('--target requires --matches.');
-  if (values.browser && values.replays) throw new Error('--replays is for in-process runs.');
+  if (values.browser && values.replays) throw new Error('--replays is for Node-worker runs.');
   if (values['browser-speed'] !== undefined && !values.browser)
     throw new Error('--browser-speed requires --browser.');
   const browserSpeed = Number(values['browser-speed'] ?? 1);
