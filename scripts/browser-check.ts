@@ -153,6 +153,14 @@ try {
     return r.result.value as T;
   };
   const click = (id: string) => evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);
+  const waitForLiveMatch = async () => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await evaluate(`document.getElementById('arena-state').textContent`)) === 'LIVE MATCH')
+        return;
+      await delay(100);
+    }
+    assert.fail('Match did not finish its countdown');
+  };
   const closeHelp = () =>
     evaluate(`new Promise(resolve => {
     document.getElementById('help-dialog').addEventListener('close', resolve, {once:true});
@@ -193,6 +201,36 @@ try {
     await delay(100);
   }
   await evaluate('document.fonts.ready');
+  if (!preview) {
+    const competitors = await evaluate<
+      { id: string; requests: number; invalidPlans: number }[]
+    >(`(async () => {
+      const { Game } = await import('/src/engine.ts');
+      const { PlayerRuntime } = await import('/src/players/runtime.ts');
+      const { browserBotConnection } = await import('/src/players/browser-connection.ts');
+      const { getBotTypes } = await import('/src/bots/index.ts');
+      const ids = ['ds-v41-flash', 'gpt-6-1-sol', 'gpt-6-1-terra'];
+      const models = getBotTypes().map(bot => bot.id).filter(id => !['easy', 'medium', 'hard'].includes(id));
+      if (JSON.stringify(models.sort()) !== JSON.stringify([...ids].sort()))
+        throw new Error('The model catalog must contain only the three local branch bots');
+      const game = new Game({ players: ids.map(botId => ({ kind: 'bot', botId })) }, 'merged-catalog-browser');
+      const runtime = new PlayerRuntime(game, browserBotConnection);
+      game.start();
+      try {
+        for (let tick = 0; tick < 480;) {
+          if (runtime.step(1 / 120)) tick++;
+          else await runtime.whenUnblocked();
+        }
+        return ids.map((id, index) => ({ id, ...runtime.statistics.get(index) }));
+      } finally { runtime.dispose(); }
+    })()`);
+    assert.equal(competitors.length, 3);
+    for (const bot of competitors) {
+      assert.ok(bot.requests > 0, `${bot.id} did not receive worker decisions`);
+      assert.equal(bot.invalidPlans, 0, `${bot.id} returned invalid plans`);
+    }
+    console.log('Merged competitor browser worker smoke:', JSON.stringify(competitors));
+  }
   await delay(400);
   await evaluate('localStorage.clear()');
   await evaluate(`localStorage.setItem('tank-trouble.preferences.v1', JSON.stringify({
@@ -269,7 +307,7 @@ try {
   );
   const previewSeed = await evaluate(`document.getElementById('map-seed').textContent`);
   await click('start-button');
-  await delay(2900);
+  await waitForLiveMatch();
   assert.equal(
     await evaluate(`document.getElementById('map-seed').textContent`),
     previewSeed,
@@ -358,7 +396,7 @@ try {
 
   // Settings selected during a match must not change its active controllers.
   await click('start-button');
-  await delay(2900);
+  await waitForLiveMatch();
   await selectController(2, 'bot:medium');
   assert.equal(
     await evaluate(`document.getElementById('start-caption').textContent`),
@@ -410,7 +448,7 @@ try {
   await size(1440, 1100);
   await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
   await click('start-button');
-  await delay(2900);
+  await waitForLiveMatch();
   for (const code of ['ArrowUp', 'Space']) {
     assert.equal(
       await evaluate(`(() => {
@@ -543,7 +581,10 @@ try {
     })()`);
     await click('shuffle-button');
     await click('start-button');
-    await delay(2900);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (!(await evaluate(`document.getElementById('save-replay').disabled`))) break;
+      await delay(100);
+    }
     assert.equal(await evaluate(`document.getElementById('save-replay').disabled`), false);
     await click('save-replay');
     const savedReplay = await evaluate<string>('window.__replayBlobs[0].text()');
@@ -652,7 +693,11 @@ try {
     await click('tank-plus');
     await selectController(2, 'bot:qa-crash');
     await click('start-button');
-    await delay(2900);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await evaluate(`document.getElementById('arena-state').textContent`)) === 'LIVE MATCH')
+        break;
+      await delay(100);
+    }
     assert.equal(
       await evaluate(`document.querySelector('[data-tank="2"]').dataset.controllerStatus`),
       'failed',
