@@ -1,4 +1,4 @@
-import { tankWall } from '../../geometry.ts';
+import { muzzlePosition, sweepTank, tankWall } from '../../geometry.ts';
 import { angleDiff, clamp, distance } from '../../math.ts';
 import { firstWall } from '../../queries.ts';
 import { AbstractPlayer } from '../../players/abstract-player.ts';
@@ -24,11 +24,21 @@ export class TerraBot extends AbstractPlayer {
     let desired: number;
     let throttle: number;
     if (visible) {
-      const lead = Math.min(0.22, distance(self, target) / rules.shellSpeed);
-      desired = Math.atan2(
-        target.y + target.vy * lead - self.y,
-        target.x + target.vx * lead - self.x,
-      );
+      // Approximate the travel time from the muzzle to the moving target.
+      // Bound the forecast because targets can turn or hit a wall.
+      let lead = 0;
+      for (let i = 0; i < 3; i++) {
+        lead = clamp(
+          (Math.hypot(target.x + target.vx * lead - self.x, target.y + target.vy * lead - self.y) -
+            28) /
+            rules.shellSpeed,
+          0,
+          1.5,
+        );
+      }
+      const intercept = { x: target.x + target.vx * lead, y: target.y + target.vy * lead };
+      const aim = world.lineOfSight(self, intercept) ? intercept : target;
+      desired = Math.atan2(aim.y - self.y, aim.x - self.x);
       const range = distance(self, target);
       throttle = range > 125 ? 0.85 : range < 65 ? -0.55 : 0.2;
     } else {
@@ -48,11 +58,14 @@ export class TerraBot extends AbstractPlayer {
 
     // A shot query is for the current heading, not the heading after turning.
     // While turning, attempt only on the first tick instead of firing at an untested angle.
-    const hit =
-      self.ammo > 0 || world.match.elapsed >= rules.roundDuration - rules.infiniteAmmoDuration
-        ? world.predictShot(self.angle, 1)
-        : null;
-    const fire = hit && hit.id !== self.id && hit.distance < 900;
+    const canFire =
+      self.ammo > 0 || world.match.elapsed >= rules.roundDuration - rules.infiniteAmmoDuration;
+    const hit = canFire ? world.predictShot(self.angle, 1) : null;
+    const movingHit = canFire && visible && this.directMovingHit(world, visible);
+    const fire =
+      hit?.id !== self.id &&
+      (movingHit ||
+        (hit && hit.distance < 900 && (!visible || Math.hypot(visible.vx, visible.vy) < 10)));
     return {
       segments: [
         {
@@ -65,29 +78,74 @@ export class TerraBot extends AbstractPlayer {
     };
   }
 
+  /** Test a direct shot against the target's constant-velocity motion and current walls. */
+  private directMovingHit(world: BotContext, target: BotContext['enemies'][number]): boolean {
+    const { self, map, rules } = world;
+    const muzzle = muzzlePosition(self);
+    if (firstWall(map, self.x, self.y, muzzle.x - self.x, muzzle.y - self.y)) return false;
+    const horizon = 1.5;
+    const dx = Math.cos(self.angle) * rules.shellSpeed * horizon;
+    const dy = Math.sin(self.angle) * rules.shellSpeed * horizon;
+    const hit = sweepTank(
+      muzzle.x,
+      muzzle.y,
+      dx - target.vx * horizon,
+      dy - target.vy * horizon,
+      target,
+    );
+    if (hit === null) return false;
+    const wall = firstWall(map, muzzle.x, muzzle.y, dx * hit, dy * hit);
+    if (wall) return false;
+    // Another tank can intercept the shot, so do not treat it as a clear target.
+    for (const other of world.enemies) {
+      if (other.id === target.id) continue;
+      const otherHit = sweepTank(
+        muzzle.x,
+        muzzle.y,
+        dx - other.vx * horizon,
+        dy - other.vy * horizon,
+        other,
+      );
+      if (otherHit !== null && otherHit < hit) return false;
+    }
+    return true;
+  }
+
   /** Compare a small set of feasible motions against near-term projectile trajectories. */
   private avoid(world: BotContext, preferred: PlayerDecision): PlayerDecision | null {
     const { self, map } = world;
-    const threats = world.bullets
-      .filter((b) => {
-        if (b.owner === self.id && b.bounces === 0) return false;
-        if (distance(b, self) > 210) return false;
-        const t = clamp(
-          ((self.x - b.x) * b.vx + (self.y - b.y) * b.vy) / (b.vx ** 2 + b.vy ** 2 || 1),
-          0,
-          1.1,
-        );
-        return Math.hypot(b.x + b.vx * t - self.x, b.y + b.vy * t - self.y) < 100;
-      })
-      .slice(0, 12);
-    if (!threats.length) return null;
-
-    // Stop a straight-line prediction at its first wall: do not dodge phantom shells
-    // passing through walls. The next observation will see any actual bounce.
-    const bullets = threats.map((b) => {
-      const wall = firstWall(map, b.x, b.y, b.vx * 1.1, b.vy * 1.1);
-      return { b, end: Math.min(b.life, wall ? wall.t * 1.1 : 1.1) };
-    });
+    // Trace one bounce, including our own shells after their first wall contact.
+    const bullets = world.bullets
+      .filter((b) => distance(b, self) < 245)
+      .slice(0, 12)
+      .map((b) => {
+        let end = Math.min(b.life, 1.1);
+        const wall = firstWall(map, b.x, b.y, b.vx * end, b.vy * end);
+        const bounceAt = wall ? wall.t * end : end;
+        const normal = wall ? b.vx * wall.nx + b.vy * wall.ny : 0;
+        const vx = wall ? b.vx - 2 * normal * wall.nx : b.vx;
+        const vy = wall ? b.vy - 2 * normal * wall.ny : b.vy;
+        if (wall) {
+          const remaining = end - bounceAt;
+          const secondWall = firstWall(
+            map,
+            b.x + b.vx * bounceAt + wall.nx * 0.03,
+            b.y + b.vy * bounceAt + wall.ny * 0.03,
+            vx * remaining,
+            vy * remaining,
+          );
+          if (secondWall) end = bounceAt + secondWall.t * remaining;
+        }
+        return {
+          b,
+          end,
+          bounceAt,
+          vx,
+          vy,
+          bounced: !!wall,
+        };
+      });
+    if (!bullets.length) return null;
     const walls = map.walls.filter(
       (w) =>
         Math.max(w.x1, w.x2) >= self.x - 150 &&
@@ -120,9 +178,14 @@ export class TerraBot extends AbstractPlayer {
           y = next.y;
         }
         const t = step * dt;
-        for (const { b, end } of bullets) {
+        for (const { b, end, bounceAt, vx, vy, bounced } of bullets) {
           if (t > end + 0.05) continue;
-          const d = Math.hypot(b.x + b.vx * t - x, b.y + b.vy * t - y);
+          if (b.owner === self.id && b.bounces === 0 && (!bounced || t < bounceAt)) continue;
+          const after = Math.max(0, t - bounceAt);
+          const d = Math.hypot(
+            b.x + b.vx * Math.min(t, bounceAt) + vx * after - x,
+            b.y + b.vy * Math.min(t, bounceAt) + vy * after - y,
+          );
           if (d < 45) penalty += (45 - d) ** 2 / 20;
         }
       }

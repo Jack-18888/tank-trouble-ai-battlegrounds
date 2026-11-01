@@ -49,12 +49,45 @@ test('Terra does not fire when out of ammunition or the snapshot predicts a self
   );
 });
 
-test('Terra attempts at most one shot while turning away from the queried heading', () => {
+test('Terra does not shoot at a moving target that will leave the current firing lane', () => {
   const world = fixture();
   const enemy = { ...world.enemies[0], vy: 100 };
   const action = decide({ ...world, enemies: [enemy] });
   assert.ok(Math.abs(action.steer ?? 0) >= 0.15);
-  assert.equal(action.fire, 'once');
+  assert.equal(action.fire, undefined);
+});
+
+test('Terra fires along an intercept even when the snapshot target is outside the lane', () => {
+  const world = fixture();
+  const enemy = { ...world.enemies[0], vy: 50 };
+  const moving = {
+    ...world,
+    self: { ...world.self, angle: Math.atan2(65, 200) },
+    enemies: [enemy],
+    predictShot: () => null,
+  };
+  assert.ok(decide(moving).fire);
+  const wall = { x1: 270, y1: 100, x2: 270, y2: 300 };
+  assert.equal(decide({ ...moving, map: { ...world.map, walls: [wall] } }).fire, undefined);
+});
+
+test('Terra foresees its own shell returning after a bounce', () => {
+  const world = fixture();
+  const wall = { x1: 280, y1: 100, x2: 280, y2: 260 };
+  const scene = { ...world, map: { ...world.map, walls: [wall] } };
+  const bullet = {
+    x: 240,
+    y: 180,
+    vx: 140,
+    vy: 0,
+    owner: world.self.id,
+    life: 4,
+    age: 0.1,
+    bounces: 0,
+  };
+  const normal = decide(scene);
+  const threatened = decide({ ...scene, bullets: [bullet] });
+  assert.notDeepEqual([threatened.steer, threatened.throttle], [normal.steer, normal.throttle]);
 });
 
 test('Terra changes its planned motion for an approaching shell', () => {
