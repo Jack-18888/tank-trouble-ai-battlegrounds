@@ -2,6 +2,7 @@ import { EasyBot } from './builtin/easy-bot.ts';
 import { MediumBot } from './builtin/medium-bot.ts';
 import { HardBot } from './builtin/hard-bot.ts';
 import { registerBot } from './registry.ts';
+import { AstraBot } from './astra-bot.ts';
 
 export type { BotContext, BotMetadata, BotConstructor } from './types.ts';
 export { EasyBot, MediumBot, HardBot };
@@ -9,6 +10,11 @@ export { registerBot, createBot, getBotType, getBotTypes, hasBot } from './regis
 
 // Add custom class imports and registrations here to make them available both
 // in match configuration and in the setup UI. No engine changes are needed.
+registerBot('gpt-6-astra', AstraBot, {
+  label: 'GPT-6 Astra',
+  tagline: 'READ THE RICOCHET',
+  description: 'Forecasts ricochets, intercepts moving targets, and plans safe maze movement.',
+});
 registerBot('easy', EasyBot, {
   label: 'Easy',
   tagline: 'EASE INTO IT',
