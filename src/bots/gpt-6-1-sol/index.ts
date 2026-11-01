@@ -148,7 +148,11 @@ export class Gpt61SolBot extends AbstractPlayer {
     const bankWindow =
       aim !== null && aim.quality > 1.35 && Math.abs(diff(aim.angle, self.angle)) < 1.1;
     const motion = this.move(world, waypoint, aim, flights, !pickup && (visible || bankWindow));
-    const ticks = urgent ? 6 : 10;
+    let ticks = urgent ? 6 : 10;
+    // Reobserve just before the next eligible volley instead of losing a firing window
+    // to a long movement plan. The engine still enforces the unchanged cooldown.
+    if (aim && (self.ammo > 0 || match.elapsed >= 70) && self.cooldown > 1 / 120)
+      ticks = Math.min(ticks, Math.max(1, Math.ceil(self.cooldown * 120) - 1));
     const fire = this.shouldFire(world, motion);
     this.previousSteer = motion.steer;
     this.previousThrottle = motion.throttle;
@@ -164,10 +168,11 @@ export class Gpt61SolBot extends AbstractPlayer {
     let best = world.enemies[0];
     let score = Infinity;
     for (const enemy of world.enemies) {
-      const route = world.findPath(from, world.cellAt(enemy.x, enemy.y));
       const visible = world.lineOfSight(world.self, enemy);
       const cost =
-        (visible ? distance(world.self, enemy) * 0.6 : route.length * 64) +
+        (visible
+          ? distance(world.self, enemy) * 0.6
+          : world.findPath(from, world.cellAt(enemy.x, enemy.y)).length * 64) +
         (enemy.shield ? 40 : 0) -
         (enemy.id === this.target ? 45 : 0);
       if (cost < score) {
@@ -357,6 +362,7 @@ export class Gpt61SolBot extends AbstractPlayer {
         candidates.push(angle);
       }
     }
+    const directCount = candidates.length;
     // Reflect target proposals in nearby wall *surfaces*, including the shell radius.
     const walls = this.walls
       .map((wall) => {
@@ -389,7 +395,9 @@ export class Gpt61SolBot extends AbstractPlayer {
     }
     let best: Aim | null = null;
     const checked = new Set<number>();
-    for (const angle of candidates) {
+    for (const [index, angle] of candidates.entries()) {
+      // Validate every direct lead, but spend bank-shot work only when direct fire is weak.
+      if (index >= directCount && directCount > 0 && best && best.quality > 1.7) break;
       const key = Math.round(angle * 400);
       if (checked.has(key)) continue;
       checked.add(key);
