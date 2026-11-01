@@ -137,6 +137,19 @@ test('Sol leads a moving opponent rather than firing at its old position', () =>
   game.runtime.dispose();
 });
 
+test('Sol fires as cooldown expires rather than waiting for a full movement plan', () => {
+  const game = arena('sol-cooldown-boundary');
+  game.tanks[1].cooldown = 0.04;
+  let firedAt: number | undefined;
+  for (let i = 0; i < 12 && firedAt === undefined; i++) {
+    game.update(1 / 120);
+    if (game.drainEvents().some((event) => event.type === 'fire' && event.id === 1))
+      firedAt = game.elapsed;
+  }
+  assert.ok(firedAt !== undefined && firedAt >= 0.04 && firedAt <= 0.05);
+  game.runtime.dispose();
+});
+
 test('Sol anticipates a shell which is initially moving away but will ricochet back', () => {
   const game = arena();
   Object.assign(game.tanks[0], { x: 600, y: 400 });
