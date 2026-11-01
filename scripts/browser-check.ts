@@ -209,10 +209,10 @@ try {
       const { PlayerRuntime } = await import('/src/players/runtime.ts');
       const { browserBotConnection } = await import('/src/players/browser-connection.ts');
       const { getBotTypes } = await import('/src/bots/index.ts');
-      const ids = ['ds-v41-flash', 'gpt-6-1-sol', 'gpt-6-1-terra'];
+      const ids = ['ds-v41-flash', 'gpt-6-1-sol', 'gpt-6-1-terra', 'gpt-6-astra'];
       const models = getBotTypes().map(bot => bot.id).filter(id => !['easy', 'medium', 'hard'].includes(id));
       if (JSON.stringify(models.sort()) !== JSON.stringify([...ids].sort()))
-        throw new Error('The model catalog must contain only the three local branch bots');
+        throw new Error('The model catalog must contain only the four local branch bots');
       const game = new Game({ players: ids.map(botId => ({ kind: 'bot', botId })) }, 'merged-catalog-browser');
       const runtime = new PlayerRuntime(game, browserBotConnection);
       game.start();
@@ -224,7 +224,7 @@ try {
         return ids.map((id, index) => ({ id, ...runtime.statistics.get(index) }));
       } finally { runtime.dispose(); }
     })()`);
-    assert.equal(competitors.length, 3);
+    assert.equal(competitors.length, 4);
     for (const bot of competitors) {
       assert.ok(bot.requests > 0, `${bot.id} did not receive worker decisions`);
       assert.equal(bot.invalidPlans, 0, `${bot.id} returned invalid plans`);
