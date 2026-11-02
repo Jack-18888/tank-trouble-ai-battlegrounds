@@ -10,7 +10,8 @@ import type {
   WallCollision,
 } from '../../types.ts';
 import { neighbors } from '../../queries.ts';
-import { muzzlePosition, sweepTank, sweepWall, tankWall, tanksOverlap } from '../../geometry.ts';
+import { muzzlePosition, sweepTank, sweepWall, tanksOverlap } from '../../geometry.ts';
+import { astraTouchesWall } from './geometry.ts';
 
 const clamp = (x: number, lo = -1, hi = 1) => Math.max(lo, Math.min(hi, x));
 const angleDiff = (a: number, b: number) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -415,11 +416,16 @@ export class AstraBot extends AbstractPlayer {
     let blocked = 0;
     let progress = 0;
     const valid = (p: TankPose) =>
-      !walls.some((w) => tankWall(p, w)) && !world.enemies.some((e) => tanksOverlap(p, e));
+      !astraTouchesWall(p, walls) && !world.enemies.some((e) => tanksOverlap(p, e));
     const duration = flights.length ? HORIZON : 0.5;
+    // Do not abandon an escape in the forecast before the incoming shell passes.
+    // Quiet navigation still returns to waypoint feedback quickly to avoid corner stalls.
+    const commitment = flights.some((flight) => flight.dangerous && flight.weight === undefined)
+      ? 0.5
+      : 0.25;
     for (let time = 0; time < duration - 0.001; time += STEP) {
       // The first action is committed; subsequent steps model feedback to the same intent.
-      const action = time < 0.25 ? candidate : this.control(pose, goal, aim);
+      const action = time < commitment ? candidate : this.control(pose, goal, aim);
       const oldX = pose.x;
       const oldY = pose.y;
       const nextAngle = pose.angle + action.steer * this.profile.turn * STEP;

@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { AstraBot } from '../src/bots/gpt-6-astra/index.ts';
 import { createBot } from '../src/bots/index.ts';
 import { createTestGame } from './helpers/game.ts';
+import { astraTouchesWall } from '../src/bots/gpt-6-astra/geometry.ts';
+import { tankWall } from '../src/geometry.ts';
+import { randomGenerator } from '../src/random.ts';
+
+test('Astra wall forecasting agrees with shared geometry around rounded ends and rotated hulls', () => {
+  const random = randomGenerator('astra-wall-equivalence');
+  for (let i = 0; i < 12000; i++) {
+    const wall =
+      i % 2 ? { x1: 100, y1: 100, x2: 164, y2: 100 } : { x1: 100, y1: 100, x2: 100, y2: 164 };
+    const pose = { x: 65 + random() * 135, y: 65 + random() * 135, angle: random() * Math.PI * 2 };
+    assert.equal(
+      astraTouchesWall(pose, [wall]),
+      tankWall(pose, wall),
+      JSON.stringify({ pose, wall }),
+    );
+  }
+});
 
 function arena() {
   const game = createTestGame(
@@ -84,6 +101,25 @@ test('Astra treats its own returning ricochet as dangerous', () => {
     dead: false,
   });
   for (let i = 0; i < 150; i++) game.update(1 / 120);
+  assert.equal(game.tanks[1].alive, true);
+  game.runtime.dispose();
+});
+
+test('Astra sustains its escape from two converging shells', () => {
+  const game = arena();
+  Object.assign(game.tanks[1], { angle: 3.173579146732766, cooldown: 999 });
+  for (const bullet of [
+    { x: 240.05932166438353, y: 128.46669941015034, vx: -120.1496494689278, vy: 71.86140641884056 },
+    {
+      x: 233.57024003246363,
+      y: 299.21176139639175,
+      vx: -55.37786401156946,
+      vy: -128.58185010924413,
+    },
+  ]) {
+    game.bullets.push({ ...bullet, owner: 0, life: 3, age: 0, bounces: 0, trail: [], dead: false });
+  }
+  for (let i = 0; i < 180; i++) game.update(1 / 120);
   assert.equal(game.tanks[1].alive, true);
   game.runtime.dispose();
 });
