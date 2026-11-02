@@ -4,6 +4,91 @@ Registered ID: `gpt-6-astra`. Developed on `gpt-6-astra`, created from `main`.
 No other model's bot implementation was inspected or used as an opponent. Evaluation opponents
 are the repository's built-in difficulties; navigation fixtures use an idle human slot.
 
+## Self-iteration, 2026-11-01
+
+The current version adds an allocation-light wall-overlap query using the same rounded tank
+silhouettes as the engine. The forecast now holds an evasive candidate for 0.5 seconds when an
+observed shell has a dangerous flight segment, instead of returning to pursuit after 0.25 seconds.
+Quiet navigation and hypothetical enemy volleys retain the shorter forecast commitment. These are
+rollout assumptions: actual plans remain **8 or 12 ticks**, and the full Hard profile below is
+unchanged. No shared physics, scheduler, observations, registration, or opponents changed.
+
+Only built-in Hard was used as a benchmark opponent in this iteration. The initial temporary
+Sentinel registration was removed after the user confirmed Astra's identity; none of those
+preliminary results are used here. No other AI competitor implementation or benchmark was read.
+
+### Selection and confirmation
+
+All batches below use independent rounds, classic/balanced maps, pickups enabled, target 0,
+rotating starting slots, and no capped samples. Seeds append `:0` through `:N-1`. Node is 24.18.0.
+Reports and the original source snapshot are under ignored `.qa/astra-iterate/`.
+
+| Version                                          | Tuning W / T / L | Astra deadline misses | Selection                                          |
+| ------------------------------------------------ | ---------------- | --------------------- | -------------------------------------------------- |
+| Original                                         | 18 / 2 / 4       | 65                    | Baseline                                           |
+| v1: faster wall checks                           | 19 / 0 / 5       | 37                    | Behavioral checks pass                             |
+| v2: always forecast 0.5 seconds of the candidate | 21 / 3 / 0       | 44                    | Rejected: idle-target and maze navigation failures |
+| v3: longer forecast only for observed threats    | 21 / 2 / 1       | 35                    | Selected; behavioral checks pass                   |
+
+Tuning used 24 rounds per version, seed `astra-iterate-tune`. Reports are `baseline-tune.json`,
+`v1-tune.json`, `v2-tune.json`, and `v3-tune.json`. The v3 tuning run includes two neutral-only
+scheduling failures, retained as draws. Selection preceded the following confirmation results.
+
+| Execution                                                    | Seed                       | Rounds per version | Original W / T / L | Updated W / T / L | Original / updated win rate, 95% Wilson interval |
+| ------------------------------------------------------------ | -------------------------- | ------------------ | ------------------ | ----------------- | ------------------------------------------------ |
+| Isolated Node workers, real 10 ms deadlines                  | `astra-iterate-confirm`    | 120                | 85 / 10 / 25       | 90 / 14 / 16      | 70.8% (62.2–78.2%) / 75.0% (66.6–81.9%)          |
+| Controlled in-process test adapter, constant admission clock | `astra-iterate-controlled` | 120                | 96 / 8 / 16        | 108 / 3 / 9       | 80.0% (72.0–86.2%) / 90.0% (83.3–94.2%)          |
+
+The production reports are `baseline-confirm.json` and `v3-confirm.json`. Requested execution is
+unpaced; achieved speed was **13.31x / 17.13x**. The original had one neutral-only round (index 76),
+and the updated bot had four (21, 61, 83, 89). Each such round had one request and 2,719 busy skips
+per player. These remain in the headline denominators. Faster throughput includes these neutral
+ticks and does not establish more useful combat throughput. Real-worker gains are suggestive,
+not proof of a statistically significant win-rate increase or browser equivalence.
+
+| Production version | Entry | Requests | Deadline misses | Busy skips | Invalid plans | Late replies |
+| ------------------ | ----- | -------- | --------------- | ---------- | ------------- | ------------ |
+| Original           | Astra | 14,237   | 368             | 3,480      | 0             | 358          |
+| Original           | Hard  | 9,652    | 41              | 2,719      | 0             | 40           |
+| Updated            | Astra | 14,025   | 267             | 11,331     | 0             | 258          |
+| Updated            | Hard  | 9,385    | 45              | 10,876     | 0             | 41           |
+
+The controlled comparison (`controlled.json`, runner `controlled.ts`) alternates old/new versions
+on each seed. It uses `InProcessConnection` and a constant test clock, so all misses, busy skips,
+invalid plans, and late replies are zero by construction. Request counts were 16,005 / 10,471 for
+original Astra / Hard and 15,480 / 10,091 for updated Astra / Hard. This isolates strategy behavior;
+it is **not** a production timing benchmark or evidence that the deadline problem is fixed. Its
+throughput is not reported because required checks overlapped it. The extra seed set was not used
+for tuning. No claim is made about other AI competitors or general free-for-all strength.
+
+Replays from the original diagnostic run are in `baseline-replays/`; the rejected v2's replays are
+in `v2-replays/`. Original and selected source snapshots are `baseline.ts` and `v3.ts`. Production
+reports use format v2; replays remain format v1. Do not use CLI `--compare` for old/new strength:
+that flag compares execution modes of identical source.
+
+### Current validation
+
+`npm run check` passes all **128 tests**, strict types, lint, and formatting; `npm run build` passes.
+New tests compare the optimized geometry to shared collision geometry over 12,000 seeded poses
+and verify survival against two converging shells. The latter fixture kills the original bot and
+is survived by the updated bot with controlled admission. Existing idle-target and generated-maze
+navigation tests pass. Profile and actual decision horizons are unchanged.
+
+Browser verification was attempted but is **incomplete for this revision**. The development
+browser check stopped at `Runtime.enable` with an unsettled await; Edge failed during startup.
+A separate two-round, 1x Chrome collector using a fresh profile ended with `Chromium disconnected`
+before returning any result. No achieved browser speed or browser win rate is available. Earlier
+browser results below belong to the original version, not this update.
+
+This restricted Windows session also requires the ignored `node-compat.cjs` preload to let tsx
+read the account name: `uv_os_get_passwd` otherwise throws `ENOMEM`. It only supplies environment
+account fields when that OS lookup fails; no game or timing code is changed. Reproduce locally:
+
+```powershell
+$env:NODE_OPTIONS='--require=./.qa/astra-iterate/node-compat.cjs' # only if that OS lookup fails
+npm run simulate -- gpt-6-astra hard --rounds 120 --seed astra-iterate-confirm --out .qa/astra-iterate/rerun.json
+```
+
 ## Competition settings
 
 The profile matches the guide's Hard comparison convention exactly:
@@ -39,7 +124,7 @@ enemy steering. Shell forecasts do not remove shells that might first hit anothe
 shells, bank candidates, and prediction time keep decision work bounded, but do not guarantee a
 10 ms dispatch-to-receipt latency on every machine.
 
-## Development experiments
+## Original development experiments (historical)
 
 Each batch below used 80 independent rounds, rotating slots, seed `astra-train` (sample suffixes
 `:0` through `:79`), classic/balanced maps, pickups enabled, and isolated Node workers. Counts are
@@ -63,7 +148,7 @@ The initial eight-round diagnostic replays are under `.qa/astra-smoke-v1-replays
 format v1. Benchmark reports use format v2 and include scheduler metadata and per-entry diagnostics.
 Earlier strategy snapshots are retained locally as `.qa/astra-v1.ts` through `.qa/astra-v3.ts`.
 
-## Fresh-seed confirmation
+## Original fresh-seed confirmation (historical)
 
 All samples are independent rounds with rotating slots, target 0, no capped samples, and Node
 24.18.0. Pickups are enabled except in the compact/open batch. No strategy changes followed the
@@ -127,7 +212,7 @@ replay UI. Reproduce a batch using `npm run simulate -- gpt-6-astra hard --round
 astra-confirm-20261101 --out .qa/astra-rerun.json`, adjusting roster, map, pickups, and browser options
 from the table. Timing diagnostics and outcomes may differ on a rerun.
 
-## Validation
+## Original validation (historical)
 
 `npm run check` passed: strict type checks, lint, formatting, and all 126 tests. `npm run build`
 passed and produced the browser worker bundle. Both `npm run test:browser` against Vite development
