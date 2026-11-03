@@ -252,6 +252,62 @@ try {
     await evaluate(`document.getElementById('sound-button').getAttribute('aria-pressed')`),
     'false',
   );
+  assert.equal(await evaluate(`document.getElementById('keep-playing-background').checked`), false);
+  await click('start-button');
+  await evaluate(`window.dispatchEvent(new Event('blur'))`);
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
+  await click('keep-playing-background');
+  assert.equal(
+    await evaluate(`document.getElementById('arena-state').textContent`),
+    'PAUSED',
+    'changing the background preference must preserve manual pauses',
+  );
+  await cdp('Page.reload');
+  await delay(500);
+  assert.equal(await evaluate(`document.getElementById('keep-playing-background').checked`), true);
+  await click('start-button');
+  await evaluate(`window.dispatchEvent(new Event('blur'))`);
+  assert.notEqual(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
+
+  // Switch to a real second tab: hidden pages stop receiving animation frames.
+  const { targetInfo } = await cdp<{ targetInfo: { targetId: string } }>('Target.getTargetInfo');
+  const otherTab = await cdp<{ targetId: string }>('Target.createTarget', { url: 'about:blank' });
+  try {
+    await cdp('Target.activateTarget', { targetId: otherTab.targetId });
+    assert.equal(await evaluate('document.hidden'), true, 'test tab did not become hidden');
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await evaluate(`document.getElementById('arena-state').textContent`)) === 'LIVE MATCH')
+        break;
+      await delay(100);
+    }
+    assert.equal(
+      await evaluate(`document.getElementById('arena-state').textContent`),
+      'LIVE MATCH',
+    );
+    const clock = await evaluate(`document.getElementById('match-clock').textContent`);
+    await delay(1600);
+    assert.notEqual(
+      await evaluate(`document.getElementById('match-clock').textContent`),
+      clock,
+      'the hidden match clock stopped advancing',
+    );
+    await click('pause-button');
+    const pausedClock = await evaluate(`document.getElementById('match-clock').textContent`);
+    await delay(1100);
+    assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
+    assert.equal(await evaluate(`document.getElementById('match-clock').textContent`), pausedClock);
+    await click('pause-button');
+    await click('keep-playing-background');
+    assert.equal(
+      await evaluate(`document.getElementById('arena-state').textContent`),
+      'PAUSED',
+      'disabling background play in a hidden tab must pause immediately',
+    );
+  } finally {
+    await cdp('Target.activateTarget', { targetId: targetInfo.targetId });
+    await cdp('Target.closeTarget', { targetId: otherTab.targetId });
+  }
+  assert.equal(await evaluate(`document.getElementById('arena-state').textContent`), 'PAUSED');
   await evaluate('localStorage.clear()');
   await cdp('Page.reload');
   await delay(500);
@@ -833,6 +889,7 @@ try {
           'countdown',
           'keyboard movement and fire',
           'pause',
+          'saved background-play preference, hidden-tab progression, and manual pause',
           'help modal',
           '390 / 768 / 1100 / 1440 layouts',
           'touch controls',
