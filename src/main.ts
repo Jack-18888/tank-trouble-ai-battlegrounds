@@ -24,6 +24,7 @@ interface Controls {
   'maze-density': HTMLSelectElement;
   'win-target': HTMLSelectElement;
   powerups: HTMLInputElement;
+  'keep-playing-background': HTMLInputElement;
   'pause-button': HTMLButtonElement;
   'tank-minus': HTMLButtonElement;
   'tank-plus': HTMLButtonElement;
@@ -51,7 +52,12 @@ const entities: Record<string, string> = {
 };
 const escapeHTML = (value: string) => value.replace(/[&<>"']/g, (char) => entities[char]);
 const storageKey = 'tank-trouble.preferences.v1';
-let saved = { config: DEFAULT_CONFIG, sound: true, recordReplays: false };
+let saved = {
+  config: DEFAULT_CONFIG,
+  sound: true,
+  recordReplays: false,
+  keepPlayingBackground: false,
+};
 try {
   const raw: unknown = JSON.parse(localStorage.getItem(storageKey) || '{}');
   if (raw && typeof raw === 'object') {
@@ -59,6 +65,7 @@ try {
       config: validateGameConfig('config' in raw ? raw.config : undefined),
       sound: !('sound' in raw && raw.sound === false),
       recordReplays: 'recordReplays' in raw && raw.recordReplays === true,
+      keepPlayingBackground: 'keepPlayingBackground' in raw && raw.keepPlayingBackground === true,
     };
   }
 } catch {
@@ -75,6 +82,9 @@ let replayUIKey = '';
 let uploadVersion = 0;
 const renderer = new Renderer($('arena'));
 const sound = new Sound(saved.sound !== false);
+let keepPlayingBackground = saved.keepPlayingBackground;
+let animationFrame = 0;
+let backgroundClock: Worker | undefined;
 const keys = new Set<string>();
 let controllerNoticeUntil = 0;
 let accumulator = 0,
@@ -120,12 +130,21 @@ function clearInput() {
     button.classList.remove('active');
   publishInput();
 }
-window.addEventListener('pagehide', () => runtime.dispose());
+window.addEventListener('pagehide', () => {
+  runtime.dispose();
+  cancelAnimationFrame(animationFrame);
+  backgroundClock?.terminate();
+});
 function persist() {
   try {
     localStorage.setItem(
       storageKey,
-      JSON.stringify({ config, sound: sound.enabled, recordReplays: recorder.enabled }),
+      JSON.stringify({
+        config,
+        sound: sound.enabled,
+        recordReplays: recorder.enabled,
+        keepPlayingBackground,
+      }),
     );
   } catch {
     /* Preferences are a convenience. */
@@ -156,6 +175,7 @@ function settingsUI() {
   $('maze-density').value = config.density;
   $('win-target').value = String(config.target);
   $('powerups').checked = config.powerups;
+  $('keep-playing-background').checked = keepPlayingBackground;
   $('record-replays').checked = recorder.enabled;
   const botIds = config.players.flatMap((slot) => (slot.kind === 'bot' ? [slot.botId] : []));
   const mixed = new Set(botIds).size > 1;
@@ -371,6 +391,12 @@ $('sound-button').addEventListener('click', () => {
   soundUI();
   persist();
 });
+$('keep-playing-background').addEventListener('change', () => {
+  keepPlayingBackground = $('keep-playing-background').checked;
+  persist();
+  if (document.hidden) handleFocusLoss();
+  updateFrameDriver();
+});
 $('fullscreen-button').addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
@@ -504,17 +530,18 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   if (keys.delete(e.code)) publishInput();
 });
-window.addEventListener('blur', () => {
+function handleFocusLoss() {
   clearInput();
-  if (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
+  if (
+    !keepPlayingBackground &&
+    (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
+  )
     pause();
-});
+}
+window.addEventListener('blur', handleFocusLoss);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    clearInput();
-    if (playback ? !playback.paused : ['playing', 'countdown', 'roundOver'].includes(game.state))
-      pause();
-  }
+  if (document.hidden) handleFocusLoss();
+  updateFrameDriver();
 });
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-key]')) {
   const key = button.dataset.key;
@@ -746,7 +773,6 @@ function frame(time: number) {
     replayUI();
     renderer.draw(game, playback.time);
     if (time > toastUntil) $('round-toast').classList.remove('visible');
-    requestAnimationFrame(frame);
     return;
   }
   accumulator += elapsed;
@@ -772,7 +798,28 @@ function frame(time: number) {
       lastClock = clock;
     }
   }
-  requestAnimationFrame(frame);
+}
+
+function animate(time: number) {
+  frame(time);
+  animationFrame = requestAnimationFrame(animate);
+}
+
+/** Hidden tabs suspend animation frames. A worker clock keeps opted-in matches ticking. */
+function updateFrameDriver() {
+  cancelAnimationFrame(animationFrame);
+  backgroundClock?.terminate();
+  backgroundClock = undefined;
+  // Switching clocks must not add a catch-up burst or count time spent suspended.
+  previousTime = performance.now();
+  if (document.hidden && keepPlayingBackground) {
+    backgroundClock = new Worker(new URL('./background-clock.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    backgroundClock.onmessage = () => frame(performance.now());
+  } else {
+    animationFrame = requestAnimationFrame(animate);
+  }
 }
 
 settingsUI();
@@ -780,4 +827,4 @@ scoreboard();
 soundUI();
 mapUI();
 stateUI();
-requestAnimationFrame(frame);
+updateFrameDriver();
