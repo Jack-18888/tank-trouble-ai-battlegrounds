@@ -46,7 +46,7 @@ Run `npm run check` before committing changes. Build output, dependencies, brows
 | Fire                    | Space          |
 | Pause / resume          | Escape or P    |
 
-Touchscreens get a direction pad and a fire button when a human is playing. Controls follow the tank assigned Human, regardless of its roster position. Bot-only matches hide driving controls and let you spectate; pause, help, sound, and fullscreen remain available. Switching away from the game automatically pauses it.
+Touchscreens get a direction pad and a fire button when a human is playing. Controls follow the tank assigned Human, regardless of its roster position. Bot-only matches hide driving controls and let you spectate; pause, help, sound, and fullscreen remain available. Switching away from the game automatically pauses it by default. Turn on **Keep playing in background** in match setup to continue matches and replays when switching windows or tabs. This preference is saved locally and takes effect immediately. Held driving and firing controls are released when leaving the game; manual pause and help still pause it. A background worker clock keeps hidden tabs updating, though browsers may still slow or suspend background pages, especially when the device sleeps.
 
 ## Match options
 
