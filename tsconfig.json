@@ -14,5 +14,12 @@
     "types": ["vite/client"]
   },
   "include": ["src/**/*.ts", "tests/fixtures/browser.ts", "tests/fixtures/simulation-browser.ts"],
-  "exclude": ["dist", "node_modules", ".qa", ".sites-runtime", "src/players/bot.worker.ts"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    ".qa",
+    ".sites-runtime",
+    "src/players/bot.worker.ts",
+    "src/background-clock.worker.ts"
+  ]
 }
