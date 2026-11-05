@@ -185,7 +185,8 @@ export class AstraBot extends AbstractPlayer {
     const ticks = nearby.length || fighting ? 8 : 12;
     // Fire only at the first physics tick: no blind trigger hold while turning.
     const shotAngle = self.angle + (chosen.steer * this.profile.turn) / 120;
-    const fire = this.shouldFire(world, shotAngle, aim);
+    const fire =
+      this.shouldFire(world, shotAngle, aim) && this.safeVolley(world, chosen, ticks, walls);
     return {
       segments: [
         { ticks: 1, ...chosen, fire: fire ? 'once' : undefined },
@@ -369,6 +370,74 @@ export class AstraBot extends AbstractPlayer {
       Math.abs(angleDiff(aim.angle, angle)) < Math.atan2(10, aim.range) &&
       (self.ammo > 2 || aim.range < 180 || world.match.elapsed >= 70)
     );
+  }
+
+  /** Do not create a returning shell that can hit us before the next observation. */
+  private safeVolley(
+    world: BotContext,
+    control: Control,
+    ticks: number,
+    walls: readonly Readonly<Wall>[],
+  ): boolean {
+    const { self } = world;
+    const poses: TankPose[] = [];
+    let pose: TankPose = { x: self.x, y: self.y, angle: self.angle };
+    for (let tick = 0; tick < ticks; tick++) {
+      const angle = pose.angle + (control.steer * this.profile.turn) / 120;
+      const travel = (control.throttle * this.profile.speed) / 120;
+      pose = {
+        x: pose.x + Math.cos(angle) * travel,
+        y: pose.y + Math.sin(angle) * travel,
+        angle,
+      };
+      // Contact can pivot or displace the muzzle. Wait for a clear pose instead of
+      // claiming an exact firing prediction from this deliberately simpler model.
+      if (astraTouchesWall(pose, walls) || world.enemies.some((e) => tanksOverlap(pose, e)))
+        return false;
+      poses.push(pose);
+    }
+    const muzzle = muzzlePosition(poses[0]);
+    if (firstWall(world.map, poses[0].x, poses[0].y, muzzle.x - poses[0].x, muzzle.y - poses[0].y))
+      return false;
+    const spread = self.power === 'scatter' ? [-0.17, 0, 0.17] : [0];
+    const volley = world.match.elapsed >= 70 ? spread : spread.slice(0, self.ammo);
+    for (const offset of volley) {
+      for (const error of [-this.profile.error, 0, this.profile.error]) {
+        const angle = poses[0].angle + offset + error;
+        const flights = this.trace(
+          world,
+          {
+            ...muzzle,
+            vx: Math.cos(angle) * world.rules.shellSpeed,
+            vy: Math.sin(angle) * world.rules.shellSpeed,
+            owner: self.id,
+            life: world.rules.shellLifetime,
+            age: 0,
+            bounces: 0,
+          },
+          ticks / 120,
+        );
+        for (let tick = 0; tick < ticks; tick++) {
+          for (const flight of flights) {
+            const from = Math.max(tick / 120, flight.start);
+            const to = Math.min((tick + 1) / 120, flight.end);
+            if (!flight.dangerous || to <= from) continue;
+            if (
+              sweepTank(
+                flight.x + flight.vx * (from - flight.start),
+                flight.y + flight.vy * (from - flight.start),
+                flight.vx * (to - from),
+                flight.vy * (to - from),
+                poses[tick],
+                4,
+              ) !== null
+            )
+              return false;
+          }
+        }
+      }
+    }
+    return true;
   }
 
   private trace(world: BotContext, bullet: Readonly<BulletObservation>, horizon: number): Flight[] {
