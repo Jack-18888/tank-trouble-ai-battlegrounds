@@ -64,6 +64,57 @@ test('Astra fires on an exposed stationary target and respects empty ammunition'
   game.runtime.dispose();
 });
 
+test('Astra withholds a close bank shot that returns before its plan expires', () => {
+  // Observation immediately before the fatal volley in diagnostic replay sample 7.
+  // The old snapshot-only firing check shoots and self-destructs within four ticks.
+  const game = createTestGame(
+    { players: [{ kind: 'bot', botId: 'gpt-6-astra' }, { kind: 'human' }], powerups: false },
+    'ASTRA-NOV4-TUNE:6',
+  );
+  try {
+    game.state = 'playing';
+    game.tick = 548;
+    game.elapsed = 548 / 120;
+    Object.assign(game.tanks[0], {
+      x: 278.3584559833797,
+      y: 412.87402688462123,
+      angle: 8.234227033890686,
+      cooldown: 0,
+      ammo: 9,
+    });
+    Object.assign(game.tanks[1], {
+      x: 159.9195515656556,
+      y: 224.55472149778564,
+      angle: 2.451739378601735,
+      cooldown: 0,
+    });
+    game.bullets.push({
+      x: 195.6528963926071,
+      y: 281.9972073881162,
+      vx: -50.269322304312794,
+      vy: -130.66367220870964,
+      owner: 0,
+      life: 6.1,
+      age: 1.4,
+      bounces: 1,
+      trail: [],
+      dead: false,
+    });
+    const plan = new AstraBot().decide({
+      tick: game.tick,
+      tickRate: 120,
+      input: {},
+      observe: () => game.getBotContext(game.tanks[0]),
+    });
+    assert.ok(plan.segments.every((segment) => segment.fire === undefined));
+    for (let tick = 0; tick < 8; tick++) game.update(1 / 120);
+    assert.equal(game.tanks[0].alive, true);
+    assert.equal(game.tanks[0].ammo, 9);
+  } finally {
+    game.runtime.dispose();
+  }
+});
+
 test('Astra survives a crossing shell that would hit a stationary tank', () => {
   const game = arena();
   game.tanks[1].cooldown = 999;

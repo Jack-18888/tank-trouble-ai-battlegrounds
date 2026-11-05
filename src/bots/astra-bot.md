@@ -4,6 +4,119 @@ Registered ID: `gpt-6-astra`. Developed on `gpt-6-astra`, created from `main`.
 No other model's bot implementation was inspected or used as an opponent. Evaluation opponents
 are the repository's built-in difficulties; navigation fixtures use an idle human slot.
 
+## Self-iteration, 2026-11-04
+
+The firing guard now projects Astra's position and heading through its committed plan before
+approving a volley. Shells originate at the next physics tick's muzzle, after turning and moving.
+The guard forecasts each shell that ammunition permits, including partial scatter volleys, at
+the center and both limits of the profile's firing error. It rejects a returning shell that
+intersects Astra before the next observation. It also withholds fire when predicted tank contact
+makes the simplified muzzle forecast unreliable. This adds bounded work only to proposed shots.
+It does not change movement scoring, stats, decision horizons, shared physics, or opponents.
+
+This fixes a failure found in fresh diagnostic replays: baseline samples 2 and 7 killed themselves
+25 milliseconds after firing, before another decision was possible. Sample 7 supplies the new
+behavioral regression test. Replays were validated with `parseReplay`, inspected using their
+snapshots and timestamped events, and checked with `ReplayPlayer`. On 24 tuning rounds against
+built-in Hard, the baseline scored **19 wins / 2 ties / 3 losses**, and the candidate scored
+**24 / 0 / 0**. Astra self-deaths fell from two to zero in these recorded batches. These are
+selection results, not fresh confirmation. The candidate was frozen before the confirmation runs.
+
+All evidence is under ignored `.qa/astra-nov4/`: `baseline.ts` and `v1.ts` preserve the source,
+`baseline-replays/` and `v1-replays/` contain the diagnostic recordings, and `analyze.ts` produces
+their analysis. Reports are format v2 with scheduling diagnostics; replays remain format v1.
+The original frozen source is the already-improved November 1 version, not the initial bot.
+
+Settings remain the exact Hard comparison profile
+`{ speed: 108, turn: 3.9, reaction: 0.11, error: 0.012, cooldown: 0.46 }`, with native plans of
+8 ticks near shells/in combat and 12 otherwise (15/10 observations per simulated second).
+The new guard samples error angles rather than proving safety over every angle, and forecasts
+only through plan expiry. It does not guarantee survival after a missed deadline or against
+unobserved future shots. Contact rejection can forgo useful firing opportunities.
+
+### Confirmation and second iteration
+
+These isolated Node-worker batches use real 10 ms deadlines, independent rounds, rotating slots,
+target 0, and no capped samples. Both versions use the same seeds, suffixed `:0` through `:N-1`.
+Execution is unpaced on Windows / Node 24.18.0. Counts are Astra wins / ties / losses; Hard's
+wins and losses are the inverse. The 95% intervals below are Wilson intervals for Astra wins.
+
+| Map / seed                             | Rounds per version | Baseline W / T / L | Updated W / T / L | Baseline / updated win 95% CI | Achieved speed, baseline / updated |
+| -------------------------------------- | ------------------ | ------------------ | ----------------- | ----------------------------- | ---------------------------------- |
+| Classic/balanced, `astra-nov4-confirm` | 120                | 99 / 8 / 13        | 96 / 6 / 18       | 74.7–88.3% / 72.0–86.2%       | 16.45x / 14.69x                    |
+| Compact/open, `astra-nov4-open`        | 40                 | 37 / 1 / 2         | 35 / 1 / 4        | 80.1–97.4% / 73.9–94.5%       | 13.71x / 13.49x                    |
+| Large/dense, `astra-nov4-dense`        | 40                 | 26 / 9 / 5         | 30 / 8 / 2        | 49.5–77.9% / 59.8–85.8%       | 29.37x / 23.71x                    |
+
+Pickups are enabled except on compact/open maps. Reports are `baseline-{confirm,open,dense}.json`
+and `v1-{confirm,open,dense}.json`. The combined worker result is **162/200 baseline wins versus
+161/200 updated wins**. These data do **not** establish an overall strength improvement. The
+change is retained as a targeted correction for a reproducible immediate self-hit.
+
+The known neutral-only scheduling failure remains: both players made one request, missed its
+deadline, and received 2,719 busy skips each. Classic baseline indices 21, 34, 67 and updated index
+92 had this failure. Dense baseline indices 3, 6, 12, 13, 16, 26, 35, 37, 38 and updated indices
+5, 12, 21, 27, 30, 32 also had it. All remain in the denominators. Dense-map throughput therefore
+includes rapid neutral fallback ticks; it is not a measure of useful combat throughput.
+
+| Batch   | Version  | Player | Requests | Deadline misses | Busy skips | Invalid plans | Late replies |
+| ------- | -------- | ------ | -------- | --------------- | ---------- | ------------- | ------------ |
+| Classic | Baseline | Astra  | 13875    | 201             | 8574       | 0             | 193          |
+| Classic | Baseline | Hard   | 9127     | 47              | 8158       | 0             | 44           |
+| Classic | Updated  | Astra  | 14416    | 242             | 3209       | 0             | 231          |
+| Classic | Updated  | Hard   | 9544     | 47              | 2719       | 0             | 46           |
+| Open    | Baseline | Astra  | 3953     | 53              | 69         | 0             | 52           |
+| Open    | Baseline | Hard   | 2237     | 4               | 0          | 0             | 4            |
+| Open    | Updated  | Astra  | 3895     | 65              | 119        | 0             | 64           |
+| Open    | Updated  | Hard   | 2269     | 8               | 0          | 0             | 8            |
+| Dense   | Baseline | Astra  | 6999     | 103             | 24595      | 0             | 91           |
+| Dense   | Baseline | Hard   | 5192     | 33              | 24471      | 0             | 24           |
+| Dense   | Updated  | Astra  | 8375     | 105             | 16443      | 0             | 98           |
+| Dense   | Updated  | Hard   | 6135     | 32              | 16314      | 0             | 26           |
+
+Late replies can overlap deadline misses and must not be counted again. The 24-round tuning
+batches requested unpaced execution and achieved 12.77x / 13.95x. Baseline Astra/Hard diagnostics
+were 2,987/1,920 requests, 32/3 misses, 41/0 busy skips, 0/0 invalid plans, 32/3 late replies;
+updated diagnostics were 3,007/1,916 requests, 36/8 misses, 78/0 busy skips, 0/0 invalid plans,
+36/8 late replies. Complete rates and intervals for every outcome are retained in each report.
+
+A separate 120-round fresh-seed controlled comparison (`astra-nov4-controlled`, classic/balanced,
+pickups on) alternated version order for each seed. Baseline scored **107 / 4 / 9** and updated
+**107 / 3 / 10**; both win intervals are **82.3–93.6%**. This uses `InProcessConnection` with a
+constant admission clock, so every miss, busy skip, invalid plan, and late reply is zero by
+construction. Baseline Astra/Hard request counts were 14,979/9,745; updated counts were
+15,092/9,803. It isolates strategy behavior and is not a production timing benchmark. Its
+throughput is not reported because other controlled tests and required checks overlapped it.
+The runner and results are `controlled.ts` and `controlled.json`.
+
+After the mixed worker results, a second candidate allowed later predicted contact, keeping
+the projected tank stationary when blocked. A 48-round controlled development comparison on
+`astra-nov4-tune` scored baseline **44 / 0 / 4**, original guard **45 / 0 / 3**, and relaxed guard
+**45 / 0 / 3**. The relaxed guard was rejected: it gave no measured gain to justify the less
+conservative contact assumption. Source, runner, outcomes, intervals, and per-player diagnostics
+are in `v2-runnable.ts`, `variants.ts`, and `variants.json`. The selected source remains v1.
+The controlled fresh-seed results above were not used to tune another version.
+
+### Validation for this revision
+
+`npm run check` passes strict types, lint, formatting, and **129 tests**. `npm run build` passes
+and creates the browser worker bundle. The new regression covers the replay-derived immediate
+self-hit; the existing exposed-target, empty-ammo, shell-dodging, and maze-navigation tests pass.
+
+Browser verification remains incomplete. The two-round 1x Chrome collector failed with
+`Chromium disconnected` before returning a result; an Edge fallback failed the same way.
+The browser verification suite, using a fresh
+profile and this checkout's Vite server on port 5177, also stopped at `Runtime.enable` with an
+unsettled top-level await. No browser outcome rate, achieved speed, or execution-equivalence
+claim is available. The suite copy changes only local import paths, port, and profile directory;
+its log is `browser-check.log`. No other model's implementation or results were consulted.
+
+Use the existing optional Windows account-lookup preload described below if needed. For example:
+
+```powershell
+$env:NODE_OPTIONS='--require=./.qa/astra-iterate/node-compat.cjs'
+npm run simulate -- gpt-6-astra hard --rounds 120 --seed astra-nov4-confirm --out .qa/astra-nov4/rerun.json
+```
+
 ## Self-iteration, 2026-11-01
 
 The current version adds an allocation-light wall-overlap query using the same rounded tank
